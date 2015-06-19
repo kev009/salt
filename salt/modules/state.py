@@ -1,9 +1,17 @@
 # -*- coding: utf-8 -*-
 '''
-Control the state system on the minion
+Control the state system on the minion.
+
+State Caching
+-------------
+
+When a highstate is called, the minion automatically caches a copy of the last high data.
+If you then run a highstate with cache=True it will use that cached highdata and won't hit the fileserver
+except for ``salt://`` links in the states themselves.
 '''
 
 # Import python libs
+from __future__ import absolute_import
 import os
 import json
 import copy
@@ -11,30 +19,40 @@ import shutil
 import time
 import logging
 import tarfile
-import datetime
 import tempfile
 
 # Import salt libs
 import salt.config
 import salt.utils
+import salt.utils.jid
+import salt.utils.url
 import salt.state
 import salt.payload
-from salt._compat import string_types
 from salt.exceptions import SaltInvocationError
 
+# Import 3rd-party libs
+import salt.ext.six as six
 
 __proxyenabled__ = ['*']
 
 __outputter__ = {
     'sls': 'highstate',
+    'sls_id': 'highstate',
     'pkg': 'highstate',
     'top': 'highstate',
     'single': 'highstate',
     'highstate': 'highstate',
     'template': 'highstate',
     'template_str': 'highstate',
+    'apply': 'highstate',
+    'request': 'highstate',
+    'check_request': 'highstate',
+    'run_request': 'highstate',
 }
 
+__func_alias__ = {
+    'apply_': 'apply'
+}
 log = logging.getLogger(__name__)
 
 
@@ -42,7 +60,7 @@ def _filter_running(runnings):
     '''
     Filter out the result: True + no changes data
     '''
-    ret = dict((tag, value) for tag, value in runnings.iteritems()
+    ret = dict((tag, value) for tag, value in six.iteritems(runnings)
                if not value['result'] or value['changes'])
     return ret
 
@@ -75,7 +93,7 @@ def _wait(jid):
     Wait for all previously started state jobs to finish running
     '''
     if jid is None:
-        jid = '{0:%Y%m%d%H%M%S%f}'.format(datetime.datetime.now())
+        jid = salt.utils.jid.gen_jid()
     states = _prior_running_states(jid)
     while states:
         time.sleep(1)
@@ -105,7 +123,7 @@ def running(concurrent=False):
         ).format(
             data['fun'],
             data['pid'],
-            salt.utils.jid_to_time(data['jid']),
+            salt.utils.jid.jid_to_time(data['jid']),
             data['jid'],
         )
         ret.append(err)
@@ -177,7 +195,7 @@ def low(data, queue=False, **kwargs):
     return ret
 
 
-def high(data, queue=False, **kwargs):
+def high(data, test=False, queue=False, **kwargs):
     '''
     Execute the compound calls stored in a single set of high data
     This function is mostly intended for testing the state system
@@ -191,7 +209,21 @@ def high(data, queue=False, **kwargs):
     conflict = _check_queue(queue, kwargs)
     if conflict is not None:
         return conflict
-    st_ = salt.state.State(__opts__)
+    opts = _get_opts(kwargs.get('localconfig'))
+
+    if salt.utils.test_mode(test=test, **kwargs):
+        opts['test'] = True
+    elif test is not None:
+        opts['test'] = test
+    else:
+        opts['test'] = __opts__.get('test', None)
+
+    pillar = kwargs.get('pillar')
+    if pillar is not None and not isinstance(pillar, dict):
+        raise SaltInvocationError(
+            'Pillar data must be formatted as a dictionary'
+        )
+    st_ = salt.state.State(__opts__, pillar)
     ret = st_.call_high(data)
     _set_retcode(ret)
     return ret
@@ -244,6 +276,165 @@ def template_str(tem, queue=False, **kwargs):
     return ret
 
 
+def apply_(mods=None,
+          **kwargs):
+    '''
+    .. versionadded:: 2015.5.0
+
+    Apply states! This function will call highstate or state.sls based on the
+    arguments passed in, state.apply is intended to be the main gateway for
+    all state executions.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' state.apply
+        salt '*' state.apply test
+        salt '*' state.apply test,pkgs
+    '''
+    if mods:
+        return sls(mods, **kwargs)
+    return highstate(**kwargs)
+
+
+def request(mods=None,
+            **kwargs):
+    '''
+    .. versionadded:: 2015.5.0
+
+    Request that the local admin execute a state run via
+    `salt-call state.run_request`
+    All arguments match state.apply
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' state.request
+        salt '*' state.request test
+        salt '*' state.request test,pkgs
+    '''
+    kwargs['test'] = True
+    ret = apply_(mods, **kwargs)
+    notify_path = os.path.join(__opts__['cachedir'], 'req_state.p')
+    serial = salt.payload.Serial(__opts__)
+    req = check_request()
+    req.update({kwargs.get('name', 'default'): {
+            'test_run': ret,
+            'mods': mods,
+            'kwargs': kwargs
+            }
+        })
+    cumask = os.umask(0o77)
+    try:
+        if salt.utils.is_windows():
+            # Make sure cache file isn't read-only
+            __salt__['cmd.run']('attrib -R "{0}"'.format(notify_path))
+        with salt.utils.fopen(notify_path, 'w+b') as fp_:
+            serial.dump(req, fp_)
+    except (IOError, OSError):
+        msg = 'Unable to write state request file {0}. Check permission.'
+        log.error(msg.format(notify_path))
+    os.umask(cumask)
+    return ret
+
+
+def check_request(name=None):
+    '''
+    .. versionadded:: 2015.5.0
+
+    Return the state request information, if any
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' state.check_request
+    '''
+    notify_path = os.path.join(__opts__['cachedir'], 'req_state.p')
+    serial = salt.payload.Serial(__opts__)
+    if os.path.isfile(notify_path):
+        with salt.utils.fopen(notify_path, 'rb') as fp_:
+            req = serial.load(fp_)
+        if name:
+            return req[name]
+        return req
+    return {}
+
+
+def clear_request(name=None):
+    '''
+    .. versionadded:: 2015.5.0
+
+    Clear out the state execution request without executing it
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' state.clear_request
+    '''
+    notify_path = os.path.join(__opts__['cachedir'], 'req_state.p')
+    serial = salt.payload.Serial(__opts__)
+    if not os.path.isfile(notify_path):
+        return True
+    if not name:
+        try:
+            os.remove(notify_path)
+        except (IOError, OSError):
+            pass
+    else:
+        req = check_request()
+        if name in req:
+            req.pop(name)
+        else:
+            return False
+        cumask = os.umask(0o77)
+        try:
+            if salt.utils.is_windows():
+                # Make sure cache file isn't read-only
+                __salt__['cmd.run']('attrib -R "{0}"'.format(notify_path))
+            with salt.utils.fopen(notify_path, 'w+b') as fp_:
+                serial.dump(req, fp_)
+        except (IOError, OSError):
+            msg = 'Unable to write state request file {0}. Check permission.'
+            log.error(msg.format(notify_path))
+        os.umask(cumask)
+    return True
+
+
+def run_request(name='default', **kwargs):
+    '''
+    .. versionadded:: 2015.5.0
+
+    Execute the pending state request
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' state.run_request
+    '''
+    req = check_request()
+    if name not in req:
+        return {}
+    n_req = req[name]
+    if 'mods' not in n_req or 'kwargs' not in n_req:
+        return {}
+    req[name]['kwargs'].update(kwargs)
+    if 'test' in n_req['kwargs']:
+        n_req['kwargs'].pop('test')
+    if req:
+        ret = apply_(n_req['mods'], **n_req['kwargs'])
+        try:
+            os.remove(os.path.join(__opts__['cachedir'], 'req_state.p'))
+        except (IOError, OSError):
+            pass
+        return ret
+    return {}
+
+
 def highstate(test=None,
               queue=False,
               **kwargs):
@@ -283,6 +474,7 @@ def highstate(test=None,
         salt '*' state.highstate pillar="{foo: 'Foo!', bar: 'Bar!'}"
     '''
     if _disabled(['highstate']):
+        log.debug('Salt highstate run is disabled. To re-enable, run state.enable highstate')
         ret = {
             'name': 'Salt highstate run is disabled. To re-enable, run state.enable highstate',
             'result': 'False',
@@ -321,6 +513,9 @@ def highstate(test=None,
             'Pillar data must be formatted as a dictionary'
         )
 
+    if 'pillarenv' in kwargs:
+        opts['pillarenv'] = kwargs['pillarenv']
+
     st_ = salt.state.HighState(opts, pillar, kwargs.get('__pub_jid'))
     st_.push_active()
     try:
@@ -338,6 +533,9 @@ def highstate(test=None,
             kwargs.get('terse'):
         ret = _filter_running(ret)
 
+    serial = salt.payload.Serial(__opts__)
+    cache_file = os.path.join(__opts__['cachedir'], 'highstate.p')
+
     _set_retcode(ret)
     # Work around Windows multiprocessing bug, set __opts__['test'] back to
     # value from before this function was run.
@@ -346,11 +544,12 @@ def highstate(test=None,
 
 
 def sls(mods,
-        saltenv='base',
+        saltenv=None,
         test=None,
         exclude=None,
         queue=False,
         env=None,
+        pillarenv=None,
         **kwargs):
     '''
     Execute a set list of state files from an environment.
@@ -369,11 +568,18 @@ def sls(mods,
 
         This option starts a new thread for each queued state run so use this
         option sparingly.
-    saltenv : base
+    saltenv : None
         Specify a ``file_roots`` environment.
 
         .. versionchanged:: 0.17.0
             Argument name changed from ``env`` to ``saltenv``.
+        .. versionchanged:: 2014.7
+            Defaults to None. If no saltenv is specified, the minion config will
+            be checked for a saltenv and if found, it will be used. If none is found,
+            base will be used.
+    pillarenv : None
+        Specify a ``pillar_roots`` environment. By default all pillar environments
+        merged together will be used.
     concurrent:
         WARNING: This flag is potentially dangerous. It is designed
         for use when multiple state runs can safely be run at the same
@@ -402,6 +608,19 @@ def sls(mods,
         )
         # Backwards compatibility
         saltenv = env
+    if not saltenv:
+        if __opts__.get('environment', None):
+            saltenv = __opts__['environment']
+        else:
+            saltenv = 'base'
+    else:
+        __opts__['environment'] = saltenv
+
+    if not pillarenv:
+        if __opts__.get('pillarenv', None):
+            pillarenv = __opts__['pillarenv']
+    else:
+        __opts__['pillarenv'] = pillarenv
 
     if queue:
         _wait(kwargs.get('__pub_jid'))
@@ -417,6 +636,8 @@ def sls(mods,
         disabled = _disabled([mods])
 
     if disabled:
+        for state in disabled:
+            log.debug('Salt state {0} run is disabled. To re-enable, run state.enable {0}'.format(state))
         __context__['retcode'] = 1
         return disabled
 
@@ -455,7 +676,7 @@ def sls(mods,
                 high_ = serial.load(fp_)
                 return st_.state.call_high(high_)
 
-    if isinstance(mods, string_types):
+    if isinstance(mods, six.string_types):
         mods = mods.split(',')
 
     st_.push_active()
@@ -479,11 +700,11 @@ def sls(mods,
     if __salt__['config.option']('state_data', '') == 'terse' or kwargs.get('terse'):
         ret = _filter_running(ret)
     cache_file = os.path.join(__opts__['cachedir'], 'sls.p')
-    cumask = os.umask(077)
+    cumask = os.umask(0o77)
     try:
         if salt.utils.is_windows():
             # Make sure cache file isn't read-only
-            __salt__['cmd.run']('attrib -R "{0}"'.format(cache_file))
+            __salt__['cmd.run'](['attrib', '-R', cache_file], python_shell=False)
         with salt.utils.fopen(cache_file, 'w+b') as fp_:
             serial.dump(ret, fp_)
     except (IOError, OSError):
@@ -546,7 +767,7 @@ def top(topfn,
 
     st_ = salt.state.HighState(opts, pillar)
     st_.push_active()
-    st_.opts['state_top'] = os.path.join('salt://', topfn)
+    st_.opts['state_top'] = salt.utils.url.create(topfn)
     try:
         ret = st_.call_highstate(
                 exclude=kwargs.get('exclude', []),
@@ -620,7 +841,7 @@ def show_lowstate(queue=False, **kwargs):
 def sls_id(
         id_,
         mods,
-        saltenv,
+        saltenv='base',
         test=None,
         queue=False,
         **kwargs):
@@ -644,12 +865,14 @@ def sls_id(
         opts['test'] = True
     else:
         opts['test'] = __opts__.get('test', None)
+    if 'pillarenv' in kwargs:
+        opts['pillarenv'] = kwargs['pillarenv']
     st_ = salt.state.HighState(opts)
-    if isinstance(mods, string_types):
-        mods = mods.split(',')
+    if isinstance(mods, six.string_types):
+        split_mods = mods.split(',')
     st_.push_active()
     try:
-        high_, errors = st_.render_highstate({saltenv: mods})
+        high_, errors = st_.render_highstate({saltenv: split_mods})
     finally:
         st_.pop_active()
     errors += st_.state.verify_high(high_)
@@ -657,12 +880,18 @@ def sls_id(
         __context__['retcode'] = 1
         return errors
     chunks = st_.state.compile_high_data(high_)
+    ret = {}
     for chunk in chunks:
         if chunk.get('__id__', '') == id_:
-            ret = st_.state.call_chunk(chunk, {}, chunks)
+            ret.update(st_.state.call_chunk(chunk, {}, chunks))
     # Work around Windows multiprocessing bug, set __opts__['test'] back to
     # value from before this function was run.
     __opts__['test'] = orig_test
+    if not ret:
+        raise SaltInvocationError(
+            'No matches for ID \'{0}\' found in SLS \'{1}\' within saltenv '
+            '\'{2}\''.format(id_, mods, saltenv)
+        )
     return ret
 
 
@@ -700,8 +929,10 @@ def show_low_sls(mods,
         opts['test'] = True
     else:
         opts['test'] = __opts__.get('test', None)
+    if 'pillarenv' in kwargs:
+        opts['pillarenv'] = kwargs['pillarenv']
     st_ = salt.state.HighState(opts)
-    if isinstance(mods, string_types):
+    if isinstance(mods, six.string_types):
         mods = mods.split(',')
     st_.push_active()
     try:
@@ -761,8 +992,11 @@ def show_sls(mods, saltenv='base', test=None, queue=False, env=None, **kwargs):
             'Pillar data must be formatted as a dictionary'
         )
 
+    if 'pillarenv' in kwargs:
+        opts['pillarenv'] = kwargs['pillarenv']
+
     st_ = salt.state.HighState(opts, pillar)
-    if isinstance(mods, string_types):
+    if isinstance(mods, six.string_types):
         mods = mods.split(',')
     st_.push_active()
     try:
@@ -916,6 +1150,10 @@ def pkg(pkg_path, pkg_sum, hash_type, test=False, **kwargs):
     lowstate_json = os.path.join(root, 'lowstate.json')
     with salt.utils.fopen(lowstate_json, 'r') as fp_:
         lowstate = json.load(fp_, object_hook=salt.utils.decode_dict)
+    # Check for errors in the lowstate
+    for chunk in lowstate:
+        if not isinstance(chunk, dict):
+            return lowstate
     pillar_json = os.path.join(root, 'pillar.json')
     if os.path.isfile(pillar_json):
         with salt.utils.fopen(pillar_json, 'r') as fp_:
@@ -936,8 +1174,6 @@ def pkg(pkg_path, pkg_sum, hash_type, test=False, **kwargs):
             continue
         popts['file_roots'][fn_] = [full]
     st_ = salt.state.State(popts, pillar=pillar)
-    st_.functions['saltutil.sync_all'](envs)
-    st_.module_refresh()
     ret = st_.call_chunks(lowstate)
     try:
         shutil.rmtree(root)
@@ -970,7 +1206,7 @@ def disable(states):
         'msg': ''
     }
 
-    if isinstance(states, string_types):
+    if isinstance(states, six.string_types):
         states = states.split(',')
 
     msg = []
@@ -1022,7 +1258,7 @@ def enable(states):
         'msg': ''
     }
 
-    if isinstance(states, string_types):
+    if isinstance(states, six.string_types):
         states = states.split(',')
     log.debug("states {0}".format(states))
 

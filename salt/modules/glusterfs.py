@@ -2,9 +2,16 @@
 '''
 Manage a glusterfs pool
 '''
+from __future__ import absolute_import
 
 # Import python libs
 import logging
+
+# Import 3rd-party libs
+# pylint: disable=import-error,redefined-builtin
+from salt.ext.six.moves import range
+from salt.ext.six.moves import shlex_quote as _cmd_quote
+# pylint: enable=import-error,redefined-builtin
 
 # Import salt libs
 import salt.utils
@@ -52,7 +59,7 @@ def list_peers():
 
     '''
     get_peer_list = 'gluster peer status | awk \'/Hostname/ {print $2}\''
-    result = __salt__['cmd.run'](get_peer_list)
+    result = __salt__['cmd.run'](get_peer_list, python_shell=True)
     if 'No peers present' in result:
         return None
     else:
@@ -97,7 +104,7 @@ def peer(name):
 
 
 def create(name, bricks, stripe=False, replica=False, device_vg=False,
-           transport='tcp', start=False):
+           transport='tcp', start=False, force=False):
     '''
     Create a glusterfs volume.
 
@@ -127,6 +134,9 @@ def create(name, bricks, stripe=False, replica=False, device_vg=False,
 
     start
         Start the volume after creation
+
+    force
+        Force volume creation, this works even if creating in root FS
 
     CLI Example:
 
@@ -166,6 +176,8 @@ def create(name, bricks, stripe=False, replica=False, device_vg=False,
     if transport != 'tcp':
         cmd += 'transport {0} '.format(transport)
     cmd += ' '.join(bricks)
+    if force:
+        cmd += ' force'
 
     log.debug('Clustering command:\n{0}'.format(cmd))
     ret = __salt__['cmd.run'](cmd)
@@ -315,8 +327,8 @@ def stop_volume(name):
     '''
     vol_status = status(name)
     if isinstance(vol_status, dict):
-        cmd = 'yes | gluster volume stop {0}'.format(name)
-        result = __salt__['cmd.run'](cmd)
+        cmd = 'yes | gluster volume stop {0}'.format(_cmd_quote(name))
+        result = __salt__['cmd.run'](cmd, python_shell=True)
         if result.splitlines()[0].endswith('success'):
             return 'Volume {0} stopped'.format(name)
         else:
@@ -337,7 +349,7 @@ def delete(target, stop=True):
     if target not in list_volumes():
         return 'Volume does not exist'
 
-    cmd = 'yes | gluster volume delete {0}'.format(target)
+    cmd = 'yes | gluster volume delete {0}'.format(_cmd_quote(target))
 
     # Stop volume if requested to and it is running
     if stop is True and isinstance(status(target), dict):
@@ -349,7 +361,7 @@ def delete(target, stop=True):
         if isinstance(status(target), dict):
             return 'Error: Volume must be stopped before deletion'
 
-    result = __salt__['cmd.run'](cmd)
+    result = __salt__['cmd.run'](cmd, python_shell=True)
     if result.splitlines()[0].endswith('success'):
         if stopped:
             return 'Volume {0} stopped and deleted'.format(target)

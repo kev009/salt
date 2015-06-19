@@ -48,6 +48,8 @@ Advanced Topics
     gitfs
     walkthrough_macosx
     writing_tests
+    http
+    lxc
 
 Salt Virt
 ==========
@@ -56,12 +58,12 @@ Salt Virt
 
     cloud_controller
 
-Halite
-======
+LXC
+===
 .. toctree::
     :maxdepth: 2
 
-    halite
+    lxc
 
 Using Salt at scale
 ===================
@@ -69,5 +71,3 @@ Using Salt at scale
     :maxdepth: 2
 
     intro_scale
-    the_master
-    the_minion

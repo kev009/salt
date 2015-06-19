@@ -2,8 +2,9 @@
 '''
 Manage Perl modules using CPAN
 
-.. versionadded:: Lithium
+.. versionadded:: 2015.5.0
 '''
+from __future__ import absolute_import
 
 # Import python libs
 import os

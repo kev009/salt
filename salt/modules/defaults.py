@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from __future__ import absolute_import
 import inspect
 import json
 import os
@@ -6,6 +7,8 @@ import yaml
 
 import salt.fileclient
 import salt.utils
+import salt.utils.url
+import salt.ext.six as six
 
 __virtualname__ = 'defaults'
 
@@ -29,13 +32,13 @@ def _get_files(pillar_name):
     paths = []
 
     for ext in ('yaml', 'json'):
-        source_url = 'salt://{0}/{1}'.format(pillar_name, 'defaults.' + ext)
+        source_url = salt.utils.url.create(pillar_name + '/defaults.' + ext)
         paths.append(source_url)
 
     return __context__['cp.fileclient'].cache_files(paths)
 
 
-def _load(pillar_name, defaults_path):
+def _load(defaults_path):
     '''
     Given a pillar_name and the template cache location, attempt to load
     the defaults.json from the cache location. If it does not exist, try
@@ -44,7 +47,8 @@ def _load(pillar_name, defaults_path):
     for loader in json, yaml:
         defaults_file = os.path.join(defaults_path, 'defaults.' + loader.__name__)
         if os.path.exists(defaults_file):
-            defaults = loader.load(open(defaults_file))
+            with salt.utils.fopen(defaults_file) as fhr:
+                defaults = loader.load(fhr)
             return defaults
 
 
@@ -116,7 +120,7 @@ def get(key, default=''):
 
     _get_files(pillar_name)
 
-    defaults = _load(pillar_name, defaults_path)
+    defaults = _load(defaults_path)
 
     value = __salt__['pillar.get']('{0}:{1}'.format(pillar_name, key), None)
 
@@ -126,7 +130,7 @@ def get(key, default=''):
     if value is None:
         value = default
 
-    if isinstance(value, unicode):
+    if isinstance(value, six.text_type):
         value = str(value)
 
     return value

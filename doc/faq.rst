@@ -6,13 +6,22 @@ Frequently Asked Questions
 Is Salt open-core?
 ------------------
 
-No. Salt is 100% committed to being open-source, including all of our APIs and
-the `'Halite' web interface`_ which was introduced in version 0.17.0. It is
-developed under the `Apache 2.0 license`_, allowing it to be used in both open
-and proprietary projects.
+No. Salt is 100% committed to being open-source, including all of our APIs. It
+is developed under the `Apache 2.0 license`_, allowing it to be used in both
+open and proprietary projects.
 
-.. _`'Halite' web interface`: https://github.com/saltstack/halite
 .. _`Apache 2.0 license`: http://www.apache.org/licenses/LICENSE-2.0.html
+
+I think I found a bug! What should I do?
+-----------------------------------------
+
+The salt-users mailing list as well as the salt IRC channel can both be helpful
+resources to confirm if others are seeing the issue and to assist with
+immediate debugging.
+
+To report a bug to the Salt project, please follow the instructions in 
+:doc:`reporting a bug </topics/development/reporting_bugs>`.
+
 
 What ports should I open on my firewall?
 ----------------------------------------
@@ -203,34 +212,71 @@ Here's an example of how to upgrade the salt-minion package at the end of a
 Salt run, and schedule a service restart for one minute after the package
 update completes.
 
+Linux/Unix
+**********
+
 .. code-block:: yaml
 
     salt-minion:
-      pkg:
-        - installed
+      pkg.installed:
+        - name: salt-minion
         - version: 2014.1.7-3.el6
         - order: last
-      service:
-        - running
+      service.running:
+        - name: salt-minion
         - require:
           - pkg: salt-minion
-      cmd:
-        - wait
+      cmd.wait:
         - name: echo service salt-minion restart | at now + 1 minute
         - watch:
           - pkg: salt-minion
 
-For Windows machines, restarting the minion at can be accomplished by adding
-the following state:
+To ensure that **at** is installed and **atd** is running, the following states
+can be used (be sure to double-check the package name and service name for the
+distro the minion is running, in case they differ from the example below.
+
+.. code-block:: yaml
+
+    at:
+      pkg.installed:
+        - name: at
+      service.running:
+        - name: atd
+        - enable: True
+
+An alternative to using the :program:`atd` daemon is to fork and disown the
+process.
+
+.. code-block:: yaml
+
+    restart_minion:
+      cmd.run:
+        - name: |
+            exec 0>&- # close stdin
+            exec 1>&- # close stdout
+            exec 2>&- # close stderr
+            nohup /bin/sh -c 'sleep 10 && salt-call --local service.restart salt-minion' &
+        - python_shell: True
+        - order: last
+
+Windows
+*******
+
+For Windows machines, restarting the minion at can be accomplished by
+adding the following state:
 
 .. code-block:: yaml
 
     schedule-start:
-      cmd:
-        - run
-        - name: 'at (Get-Date).AddMinutes(1).ToString("HH:mm") cmd /c "net stop salt-minion && net start salt-minion"'
-        - shell: powershell
+      cmd.run:
+        - name: 'start powershell "Restart-Service -Name salt-minion"'
         - order: last
+
+or running immediately from the command line:
+
+.. code-block:: bash
+
+    salt -G kernel:Windows cmd.run 'start powershell "Restart-Service -Name salt-minion"'
 
 Salting the Salt Master
 -----------------------

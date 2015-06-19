@@ -4,6 +4,7 @@ Package support for pkgin based systems, inspired from freebsdpkg module
 '''
 
 # Import python libs
+from __future__ import absolute_import
 import os
 import re
 import logging
@@ -12,6 +13,9 @@ import logging
 import salt.utils
 import salt.utils.decorators as decorators
 from salt.exceptions import CommandExecutionError, MinionError
+
+# Import 3rd-party libs
+import salt.ext.six as six
 
 VERSION_MATCH = re.compile(r'pkgin(?:[\s]+)([\d.]+)(?:[\s]+)(?:.*)')
 log = logging.getLogger(__name__)
@@ -41,7 +45,7 @@ def _check_pkgin():
 
 
 @decorators.memoize
-def _supports_regex():
+def _get_version():
     '''
     Get the pkgin version
     '''
@@ -57,7 +61,25 @@ def _supports_regex():
     if not version_match:
         return False
 
-    return tuple([int(i) for i in version_match.group(1).split('.')]) > (0, 5)
+    return version_match.group(1).split('.')
+
+
+@decorators.memoize
+def _supports_regex():
+    '''
+    Check support of regexp
+    '''
+
+    return tuple([int(i) for i in _get_version()]) > (0, 5)
+
+
+@decorators.memoize
+def _supports_parsing():
+    '''
+    Check support of parsing
+    '''
+
+    return tuple([int(i) for i in _get_version()]) > (0, 7)
 
 
 def __virtual__():
@@ -74,7 +96,7 @@ def __virtual__():
 def _splitpkg(name):
     # name is in the format foobar-1.0nb1, already space-splitted
     if name[0].isalnum() and name != 'No':  # avoid < > = and 'No result'
-        return name.rsplit('-', 1)
+        return name.split(';', 1)[0].rsplit('-', 1)
 
 
 def search(pkg_name):
@@ -239,7 +261,10 @@ def list_pkgs(versions_as_list=False, **kwargs):
     out = __salt__['cmd.run'](pkg_command, output_loglevel='trace')
     for line in out.splitlines():
         try:
-            pkg, ver = line.split(' ')[0].rsplit('-', 1)
+            if _supports_parsing():
+                pkg, ver = line.split(';', 1)[0].rsplit('-', 1)
+            else:
+                pkg, ver = line.split(' ', 1)[0].rsplit('-', 1)
         except ValueError:
             continue
         __salt__['pkg_resource.add_pkg'](ret, pkg, ver)
@@ -376,7 +401,7 @@ def upgrade():
         return {}
 
     old = list_pkgs()
-    call = __salt__['cmd.ret_all']('{0} -y fug'.format(pkgin))
+    call = __salt__['cmd.run_all']('{0} -y fug'.format(pkgin))
     if call['retcode'] != 0:
         ret['result'] = False
         if 'stderr' in call:
@@ -491,7 +516,7 @@ def _rehash():
     Use whenever a new command is created during the current
     session.
     '''
-    shell = __salt__['cmd.run']('echo $SHELL', output_loglevel='trace')
+    shell = __salt__['environ.get']('SHELL')
     if shell.split('/')[-1] in ('csh', 'tcsh'):
         __salt__['cmd.run']('rehash', output_loglevel='trace')
 
@@ -508,7 +533,7 @@ def file_list(package):
     '''
     ret = file_dict(package)
     files = []
-    for pkg_files in ret['files'].values():
+    for pkg_files in six.itervalues(ret['files']):
         files.extend(pkg_files)
     ret['files'] = files
     return ret
@@ -543,7 +568,6 @@ def file_dict(package):
         else:
             continue  # unexpected string
 
-    print files
     return {'errors': errors, 'files': files}
 
 # vim: tabstop=4 expandtab shiftwidth=4 softtabstop=4

@@ -41,6 +41,7 @@ Connection module for Amazon S3
 
 :depends: requests
 '''
+from __future__ import absolute_import
 
 # Import Python libs
 import logging
@@ -175,7 +176,8 @@ def head(bucket, path=None, key=None, keyid=None, service_url=None,
                                key=key,
                                keyid=keyid,
                                service_url=service_url,
-                               verify_ssl=verify_ssl)
+                               verify_ssl=verify_ssl,
+                               full_headers=True)
 
 
 def put(bucket, path=None, return_bin=False, action=None, local_file=None,

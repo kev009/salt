@@ -29,6 +29,7 @@ If this driver is still needed, set up the cloud configuration at
       provider: aws
 
 '''
+from __future__ import absolute_import
 # pylint: disable=E0102
 
 # Import python libs
@@ -50,6 +51,7 @@ from salt.exceptions import (
     SaltCloudExecutionTimeout,
     SaltCloudExecutionFailure
 )
+import salt.ext.six as six
 
 try:
     from salt.cloud.libcloudfuncs import *   # pylint: disable=W0614,W0401
@@ -76,9 +78,6 @@ except ImportError:
 # Get logging started
 log = logging.getLogger(__name__)
 
-# namespace libcloudfuncs
-get_salt_interface = namespaced_function(get_salt_interface, globals())
-
 # Define the module's virtual name
 __virtualname__ = 'aws'
 
@@ -101,7 +100,7 @@ def __virtual__():
     if get_configured_provider() is False:
         return False
 
-    for provider, details in __opts__['providers'].iteritems():
+    for provider, details in six.iteritems(__opts__['providers']):
         if 'provider' not in details or details['provider'] != 'aws':
             continue
 
@@ -149,6 +148,9 @@ def __virtual__():
         libcloudfuncs_destroy, globals(), (conn,)
     )
     show_instance = namespaced_function(show_instance, globals())
+
+    log.warning('This driver has been deprecated and will be removed in the '
+                'Boron release of Salt. Please use the ec2 driver instead.')
 
     return __virtualname__
 
@@ -241,7 +243,7 @@ def ssh_username(vm_):
         usernames = [usernames]
 
     # get rid of None's or empty names
-    usernames = filter(lambda x: x, usernames)
+    usernames = [x for x in usernames if x]
     # Keep a copy of the usernames the user might have provided
     initial = usernames[:]
 
@@ -419,7 +421,7 @@ def create(vm_):
         log.info('Salt node data. Public_ip: {0}'.format(data.public_ips[0]))
         ip_address = data.public_ips[0]
 
-    if get_salt_interface(vm_) == 'private_ips':
+    if salt.utils.cloud.get_salt_interface(vm_, __opts__) == 'private_ips':
         salt_ip_address = data.private_ips[0]
         log.info('Salt interface set to: {0}'.format(salt_ip_address))
     else:
@@ -429,6 +431,9 @@ def create(vm_):
     username = 'ec2-user'
     ssh_connect_timeout = config.get_cloud_config_value(
         'ssh_connect_timeout', vm_, __opts__, 900   # 15 minutes
+    )
+    ssh_port = config.get_cloud_config_value(
+        'ssh_port', vm_, __opts__, 22
     )
     if salt.utils.cloud.wait_for_port(ip_address, timeout=ssh_connect_timeout):
         for user in usernames:
@@ -458,6 +463,7 @@ def create(vm_):
         deploy_kwargs = {
             'opts': __opts__,
             'host': ip_address,
+            'port': ssh_port,
             'salt_host': salt_ip_address,
             'username': username,
             'key_filename': key_filename,

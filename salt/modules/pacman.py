@@ -5,6 +5,7 @@ A module to wrap pacman calls, since Arch is the best
 '''
 
 # Import python libs
+from __future__ import absolute_import
 import copy
 import logging
 import re
@@ -12,6 +13,9 @@ import re
 # Import salt libs
 import salt.utils
 from salt.exceptions import CommandExecutionError, MinionError
+
+# Import 3rd-party libs
+import salt.ext.six as six
 
 log = logging.getLogger(__name__)
 
@@ -124,10 +128,7 @@ def list_upgrades(refresh=False):
     if refresh:
         options.append('-y')
 
-    cmd = (
-        'pacman {0} | egrep -v '
-        r'"^\s|^:"'
-    ).format(' '.join(options))
+    cmd = ('pacman {0}').format(' '.join(options))
 
     call = __salt__['cmd.run_all'](cmd, output_loglevel='trace')
 
@@ -143,7 +144,9 @@ def list_upgrades(refresh=False):
     else:
         out = call['stdout']
 
-    for line in out.splitlines():
+    output = iter(out.splitlines())
+    next(output)  # Skip informational output line
+    for line in output:
         comps = line.split(' ')
         if len(comps) < 2:
             continue
@@ -228,7 +231,8 @@ def refresh_db():
     '''
     cmd = 'LANG=C pacman -Sy'
     ret = {}
-    call = __salt__['cmd.run_all'](cmd, output_loglevel='trace')
+    call = __salt__['cmd.run_all'](cmd, output_loglevel='trace',
+            python_shell=True)
     if call['retcode'] != 0:
         comment = ''
         if 'stderr' in call:
@@ -347,7 +351,7 @@ def install(name=None,
         targets = []
         problems = []
         options = ['--noprogressbar', '--noconfirm', '--needed']
-        for param, version_num in pkg_params.iteritems():
+        for param, version_num in six.iteritems(pkg_params):
             if version_num is None:
                 targets.append(param)
             else:
@@ -590,5 +594,5 @@ def owner(*paths):
     for path in paths:
         ret[path] = __salt__['cmd.run_stdout'](cmd.format(path))
     if len(ret) == 1:
-        return ret.values()[0]
+        return next(six.itervalues(ret))
     return ret

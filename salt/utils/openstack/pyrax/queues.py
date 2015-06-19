@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+
+from __future__ import absolute_import
+
 # Import Python libs
 import logging
 log = logging.getLogger(__name__)
@@ -40,8 +43,9 @@ class RackspaceQueues(object):
             q = self.exists(qname)
             if not q:
                 return False
-            self.show(qname).delete()
-
+            queue = self.show(qname)
+            if queue:
+                queue.delete()
         except pyrax.exceptions as err_msg:
             log.error('RackSpace API got some problems during deletion: {0}'.format(err_msg))
             return False

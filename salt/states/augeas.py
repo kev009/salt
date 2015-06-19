@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
 Configuration management using Augeas
-=====================================
 
 .. versionadded:: 0.17.0
 
@@ -28,11 +27,15 @@ Augeas_ can be used to manage configuration files.
     known to resolve the issue.
 
 '''
+from __future__ import absolute_import
 
 # Import python libs
 import re
 import os.path
 import difflib
+
+# Import Salt libs
+import salt.utils
 
 
 def __virtual__():
@@ -52,8 +55,15 @@ def change(name, context=None, changes=None, lens=None, **kwargs):
         State name
 
     context
-        The context to use. Set this to a file path, prefixed by ``/files``, to
-        avoid redundancy, e.g.:
+        A file path, prefixed by ``/files``. Should resolve to an actual file
+        (not an arbitrary augeas path). This is used to avoid duplicating the
+        file name for each item in the changes list (for example, ``set bind 0.0.0.0``
+        in the example below operates on the file specified by ``context``). If
+        ``context`` is not specified, a file path prefixed by ``/files`` should be
+        included with the ``set`` command.
+
+        The file path is examined to determine if the
+        specified changes are already present.
 
         .. code-block:: yaml
 
@@ -167,7 +177,7 @@ def change(name, context=None, changes=None, lens=None, **kwargs):
         ret['result'] = None
         ret['comment'] = 'Executing commands'
         if context:
-            ret['comment'] += ' in file "{1}"'.format(context)
+            ret['comment'] += ' in file "{0}":\n'.format(context)
         ret['comment'] += "\n".join(changes)
         return ret
 
@@ -175,9 +185,8 @@ def change(name, context=None, changes=None, lens=None, **kwargs):
     if context:
         filename = re.sub('^/files|/$', '', context)
         if os.path.isfile(filename):
-            file_ = open(filename, 'r')
-            old_file = file_.readlines()
-            file_.close()
+            with salt.utils.fopen(filename, 'r') as file_:
+                old_file = file_.readlines()
 
     result = __salt__['augeas.execute'](context=context, lens=lens, commands=changes)
     ret['result'] = result['retval']
@@ -187,64 +196,17 @@ def change(name, context=None, changes=None, lens=None, **kwargs):
         return ret
 
     if old_file:
-        file_ = open(filename, 'r')
-        diff = ''.join(difflib.unified_diff(old_file, file_.readlines(), n=0))
-        file_.close()
+        with salt.utils.fopen(filename, 'r') as file_:
+            diff = ''.join(difflib.unified_diff(old_file, file_.readlines(), n=0))
 
         if diff:
             ret['comment'] = 'Changes have been saved'
-            ret['changes'] = diff
+            ret['changes'] = {'diff': diff}
         else:
             ret['comment'] = 'No changes made'
 
     else:
         ret['comment'] = 'Changes have been saved'
-        ret['changes'] = changes
+        ret['changes'] = {'updates': changes}
 
-    return ret
-
-
-def setvalue(name, prefix=None, changes=None, **kwargs):
-    '''
-    .. deprecated:: 2014.7.0
-       Use :py:func:`~salt.states.augeas.change` instead.
-
-    Set a value for a specific augeas path
-    '''
-    ret = {'name': name, 'result': False, 'comment': '', 'changes': {}}
-
-    args = []
-    if not changes:
-        ret['comment'] = '\'changes\' must be specified'
-        return ret
-    else:
-        if not isinstance(changes, list):
-            ret['comment'] = '\'changes\' must be formatted as a list'
-            return ret
-        for change_ in changes:
-            if not isinstance(change_, dict) or len(change_) > 1:
-                ret['comment'] = 'Invalidly-formatted change'
-                return ret
-            key = next(iter(change_))
-            args.extend([key, change_[key]])
-
-    if prefix is not None:
-        args.insert(0, 'prefix={0}'.format(prefix))
-
-    if __opts__['test']:
-        ret['result'] = None
-        ret['comment'] = 'Calling setvalue with {0}'.format(args)
-        return ret
-
-    call = __salt__['augeas.setvalue'](*args)
-
-    ret['result'] = call['retval']
-
-    if ret['result'] is False:
-        ret['comment'] = 'Error: {0}'.format(call['error'])
-        return ret
-
-    ret['comment'] = 'Success'
-    for change_ in changes:
-        ret['changes'].update(change_)
     return ret

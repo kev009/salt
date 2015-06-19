@@ -2,6 +2,7 @@
 '''
 Run munin plugins/checks from salt and format the output as data.
 '''
+from __future__ import absolute_import
 
 # Import python libs
 import os
@@ -9,7 +10,7 @@ import stat
 
 # Import salt libs
 import salt.utils
-from salt._compat import string_types
+from salt.ext.six import string_types
 
 PLUGINDIR = '/etc/munin/plugins/'
 
@@ -49,7 +50,9 @@ def run(plugins):
         if plugin not in all_plugins:
             continue
         data[plugin] = {}
-        muninout = __salt__['cmd.run']('munin-run ' + plugin)
+        muninout = __salt__['cmd.run'](
+                'munin-run {0}'.format(plugin),
+                python_shell=False)
         for line in muninout.split('\n'):
             if 'value' in line:  # This skips multigraph lines, etc
                 key, val = line.split(' ')
@@ -98,7 +101,10 @@ def list_plugins():
     for plugin in pluginlist:
         # Check if execute bit
         statf = os.path.join(PLUGINDIR, plugin)
-        executebit = stat.S_IXUSR & os.stat(statf)[stat.ST_MODE]
+        try:
+            executebit = stat.S_IXUSR & os.stat(statf)[stat.ST_MODE]
+        except OSError:
+            pass
         if executebit:
             ret.append(plugin)
     return ret

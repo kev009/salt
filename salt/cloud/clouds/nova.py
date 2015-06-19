@@ -3,11 +3,6 @@
 OpenStack Nova Cloud Module
 ===========================
 
-PLEASE NOTE: This module is currently in early development, and considered to
-be experimental and unstable. It is not recommended for production use. Unless
-you are actively developing code in this module, you should use the OpenStack
-module instead.
-
 OpenStack is an open source project that is in use by a number a cloud
 providers, each of which have their own ways of using it.
 
@@ -89,7 +84,11 @@ accept them
 
 Note: You must include the default net-ids when setting networks or the server
 will be created without the rest of the interfaces
+
+Note: For rackconnect v3, rackconnectv3 needs to be specified with the
+rackconnect v3 cloud network as it's variable
 '''
+from __future__ import absolute_import
 # pylint: disable=E0102
 
 # The import section is mostly libcloud boilerplate
@@ -99,9 +98,11 @@ import os
 import logging
 import socket
 import pprint
+import yaml
 
 # Import generic libcloud functions
 from salt.cloud.libcloudfuncs import *   # pylint: disable=W0614,W0401
+import salt.ext.six as six
 try:
     from salt.utils.openstack import nova
     HAS_NOVA = True
@@ -143,10 +144,6 @@ except ImportError:
 log = logging.getLogger(__name__)
 request_log = logging.getLogger('requests')
 
-# namespace libcloudfuncs
-get_salt_interface = namespaced_function(get_salt_interface, globals())
-
-
 # Some of the libcloud functions need to be in the same namespace as the
 # functions defined in the module, so we create new function objects inside
 # this module namespace
@@ -154,7 +151,7 @@ script = namespaced_function(script, globals())
 reboot = namespaced_function(reboot, globals())
 
 
-# Only load in this module is the OPENSTACK configurations are in place
+# Only load in this module if the Nova configurations are in place
 def __virtual__():
     '''
     Check for Nova configurations
@@ -225,7 +222,7 @@ def get_image(conn, vm_):
         'ascii', 'salt-cloud-force-ascii'
     )
 
-    for img in image_list.keys():
+    for img in image_list:
         if vm_image in (image_list[img]['id'], img):
             return image_list[img]['id']
 
@@ -461,7 +458,7 @@ def request_instance(vm_=None, call=None):
         group_list = []
 
         for vmg in vm_groups:
-            if vmg in [name for name, details in avail_groups.iteritems()]:
+            if vmg in [name for name, details in six.iteritems(avail_groups)]:
                 group_list.append(vmg)
             else:
                 raise SaltCloudNotFound(
@@ -499,6 +496,10 @@ def request_instance(vm_=None, call=None):
     if userdata_file is not None:
         with salt.utils.fopen(userdata_file, 'r') as fp:
             kwargs['userdata'] = fp.read()
+
+    kwargs['config_drive'] = config.get_cloud_config_value(
+        'config_drive', vm_, __opts__, search_global=False
+    )
 
     salt.utils.cloud.fire_event(
         'event',
@@ -538,14 +539,6 @@ def create(vm_):
             'The defined ssh_key_file {0!r} does not exist'.format(
                 key_filename
             )
-        )
-
-    if deploy is True and key_filename is None and \
-            salt.utils.which('sshpass') is None:
-        raise SaltCloudSystemExit(
-            'Cannot deploy salt in a VM if the \'ssh_key_file\' setting '
-            'is not set and \'sshpass\' binary is not present on the '
-            'system for the password.'
         )
 
     vm_['key_filename'] = key_filename
@@ -612,13 +605,26 @@ def create(vm_):
             # Still not running, trigger another iteration
             return
 
+        rackconnectv3 = config.get_cloud_config_value(
+            'rackconnectv3', vm_, __opts__, default='False',
+            search_global=False
+        )
+
+        if rackconnectv3:
+            networkname = rackconnectv3
+            for network in node['addresses'].get(networkname, []):
+                if network['version'] is 4:
+                    node['extra']['access_ip'] = network['addr']
+                    break
+            vm_['rackconnect'] = True
+
         if rackconnect(vm_) is True:
             extra = node.get('extra', {})
             rc_status = extra.get('metadata', {}).get(
                 'rackconnect_automation_status', '')
             access_ip = extra.get('access_ip', '')
 
-            if rc_status != 'DEPLOYED':
+            if rc_status != 'DEPLOYED' and not rackconnectv3:
                 log.debug('Waiting for Rackconnect automation to complete')
                 return
 
@@ -665,7 +671,7 @@ def create(vm_):
                         result.append(private_ip)
 
         if rackconnect(vm_) is True:
-            if ssh_interface(vm_) != 'private_ips':
+            if ssh_interface(vm_) != 'private_ips' or rackconnectv3:
                 data.public_ips = access_ip
                 return data
 
@@ -708,10 +714,10 @@ def create(vm_):
         ip_address = preferred_ip(vm_, data.public_ips)
     log.debug('Using IP address {0}'.format(ip_address))
 
-    if get_salt_interface(vm_) == 'private_ips':
+    if salt.utils.cloud.get_salt_interface(vm_, __opts__) == 'private_ips':
         salt_ip_address = preferred_ip(vm_, data.private_ips)
         log.info('Salt interface set to: {0}'.format(salt_ip_address))
-    elif rackconnect(vm_) is True and get_salt_interface(vm_) != 'private_ips':
+    elif rackconnect(vm_) is True and salt.utils.cloud.get_salt_interface(vm_, __opts__) != 'private_ips':
         salt_ip_address = data.public_ips
     else:
         salt_ip_address = preferred_ip(vm_, data.public_ips)
@@ -783,16 +789,37 @@ def list_nodes(call=None, **kwargs):
 
     if not server_list:
         return {}
-    for server in server_list.keys():
+    for server in server_list:
         server_tmp = conn.server_show(server_list[server]['id'])[server]
+
+        private = []
+        public = []
+        if 'addresses' not in server_tmp:
+            server_tmp['addresses'] = {}
+        for network in server_tmp['addresses'].keys():
+            for address in server_tmp['addresses'][network]:
+                if salt.utils.cloud.is_public_ip(address.get('addr', '')):
+                    public.append(address['addr'])
+                elif ':' in address['addr']:
+                    public.append(address['addr'])
+                elif '.' in address['addr']:
+                    private.append(address['addr'])
+
+        if server_tmp['accessIPv4']:
+            if salt.utils.cloud.is_public_ip(server_tmp['accessIPv4']):
+                public.append(server_tmp['accessIPv4'])
+            else:
+                private.append(server_tmp['accessIPv4'])
+        if server_tmp['accessIPv6']:
+            public.append(server_tmp['accessIPv6'])
+
         ret[server] = {
             'id': server_tmp['id'],
             'image': server_tmp['image']['id'],
             'size': server_tmp['flavor']['id'],
             'state': server_tmp['state'],
-            'private_ips': [addrs['addr'] for addrs in
-                            server_tmp['addresses'].get('private', [])],
-            'public_ips': [server_tmp['accessIPv4'], server_tmp['accessIPv6']],
+            'private_ips': public,
+            'public_ips': private,
         }
     return ret
 
@@ -815,7 +842,7 @@ def list_nodes_full(call=None, **kwargs):
 
     if not server_list:
         return {}
-    for server in server_list.keys():
+    for server in server_list:
         try:
             ret[server] = conn.server_show_libcloud(
                 server_list[server]['id']
@@ -849,6 +876,10 @@ def volume_create(name, size=100, snapshot=None, voltype=None, **kwargs):
     return conn.volume_create(**create_kwargs)
 
 
+# Command parity with EC2 and Azure
+create_volume = volume_create
+
+
 def volume_delete(name, **kwargs):
     '''
     Delete block storage device
@@ -879,6 +910,73 @@ def volume_attach(name, server_name, device='/dev/xvdb', **kwargs):
         device,
         timeout=300
     )
+
+
+# Command parity with EC2 and Azure
+attach_volume = volume_attach
+
+
+def volume_create_attach(name, call=None, **kwargs):
+    '''
+    Create and attach volumes to created node
+    '''
+    if call == 'function':
+        raise SaltCloudSystemExit(
+            'The create_attach_volumes action must be called with '
+            '-a or --action.'
+        )
+
+    if type(kwargs['volumes']) is str:
+        volumes = yaml.safe_load(kwargs['volumes'])
+    else:
+        volumes = kwargs['volumes']
+
+    ret = []
+    for volume in volumes:
+        created = False
+
+        volume_dict = {
+            'name': volume['name'],
+        }
+        if 'volume_id' in volume:
+            volume_dict['volume_id'] = volume['volume_id']
+        elif 'snapshot' in volume:
+            volume_dict['snapshot'] = volume['snapshot']
+        else:
+            volume_dict['size'] = volume['size']
+
+            if 'type' in volume:
+                volume_dict['type'] = volume['type']
+            if 'iops' in volume:
+                volume_dict['iops'] = volume['iops']
+
+        if 'id' not in volume_dict:
+            created_volume = create_volume(**volume_dict)
+            created = True
+            volume_dict.update(created_volume)
+
+        attach = attach_volume(
+            name=volume['name'],
+            server_name=name,
+            device=volume.get('device', None),
+            call='action'
+        )
+
+        if attach:
+            msg = (
+                '{0} attached to {1} (aka {2})'.format(
+                    volume_dict['id'],
+                    name,
+                    volume_dict['name'],
+                )
+            )
+            log.info(msg)
+            ret.append(msg)
+    return ret
+
+
+# Command parity with EC2 and Azure
+create_attach_volumes = volume_create_attach
 
 
 def volume_list(**kwargs):

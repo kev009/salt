@@ -14,15 +14,16 @@ authentication, it is also possible to pass private keys to use explicitly.
         - rev: develop
         - target: /tmp/salt
 '''
+from __future__ import absolute_import
 
 # Import python libs
+import copy
 import logging
 import os
 import os.path
 import shutil
 
 # Import salt libs
-import salt.utils
 from salt.exceptions import CommandExecutionError
 
 log = logging.getLogger(__name__)
@@ -38,7 +39,6 @@ def __virtual__():
 def latest(name,
            rev=None,
            target=None,
-           runas=None,
            user=None,
            force=None,
            force_checkout=False,
@@ -48,7 +48,11 @@ def latest(name,
            bare=False,
            remote_name='origin',
            always_fetch=False,
+           fetch_tags=True,
+           depth=None,
            identity=None,
+           https_user=None,
+           https_pass=None,
            onlyif=False,
            unless=False):
     '''
@@ -64,11 +68,6 @@ def latest(name,
     target
         Name of the target directory where repository is about to be cloned
 
-    runas
-        Name of the user performing repository management operations
-
-        .. deprecated:: 0.17.0
-
     user
         Name of the user performing repository management operations
 
@@ -79,6 +78,10 @@ def latest(name,
 
     force_checkout
         Force a checkout even if there might be overwritten changes
+        (Default: False)
+
+    force_reset
+        Force the checkout to ``--reset hard`` to the remote ref
         (Default: False)
 
     submodules
@@ -102,8 +105,23 @@ def latest(name,
         until the tag or branch name changes. Setting this to true will force
         a fetch to occur. Only applies when rev is set. (Default: False)
 
+    depth
+        Defines depth in history when git a clone is needed in order to ensure
+        latest. E.g. ``depth: 1`` is usefull when deploying from a repository
+        with a long history. Use rev to specify branch. This is not compatible with tags or revision IDs.(Default: ``None``)
+
     identity
-        A path to a private key to use over SSH
+        A path on the minion server to a private key to use over SSH
+
+    https_user
+        HTTP Basic Auth username for HTTPS (only) clones
+
+        .. versionadded:: 2015.5.0
+
+    https_pass
+        HTTP Basic Auth password for HTTPS (only) clones
+
+        .. versionadded:: 2015.5.0
 
     onlyif
         A command to run as a check, run the named command only if the command
@@ -162,30 +180,6 @@ def latest(name,
         return _fail(ret, '"target" option is required')
     target = os.path.expanduser(target)
 
-    salt.utils.warn_until(
-        'Lithium',
-        'Please remove \'runas\' support at this stage. \'user\' support was '
-        'added in 0.17.0',
-        _dont_call_warnings=True
-    )
-    if runas:
-        # Warn users about the deprecation
-        ret.setdefault('warnings', []).append(
-            'The \'runas\' argument is being deprecated in favor of \'user\', '
-            'please update your state files.'
-        )
-    if user is not None and runas is not None:
-        # user wins over runas but let warn about the deprecation.
-        ret.setdefault('warnings', []).append(
-            'Passed both the \'runas\' and \'user\' arguments. Please don\'t. '
-            '\'runas\' is being ignored in favor of \'user\'.'
-        )
-        runas = None
-    elif runas is not None:
-        # Support old runas usage
-        user = runas
-        runas = None
-
     run_check_cmd_kwargs = {'runas': user}
     if 'shell' in __grains__:
         run_check_cmd_kwargs['shell'] = __grains__['shell']
@@ -206,23 +200,32 @@ def latest(name,
         log.debug(('target {0} is found, "git pull" '
                    'is probably required'.format(target)))
         try:
-            current_rev = __salt__['git.revision'](target, user=user)
+            try:
+                current_rev = __salt__['git.revision'](target, user=user)
+            except CommandExecutionError:
+                current_rev = None
 
             # handle the case where a branch was provided for rev
             remote_rev, new_rev = None, None
-            branch = __salt__['git.current_branch'](target, user=user)
+            try:
+                branch = __salt__['git.current_branch'](target, user=user)
+            except CommandExecutionError:
+                branch = None
+
             # We're only interested in the remote branch if a branch
             # (instead of a hash, for example) was provided for rev.
-            if branch != 'HEAD' and branch == rev:
+            if (branch != 'HEAD' and branch == rev) or rev is None:
                 remote_rev = __salt__['git.ls_remote'](target,
                                                        repository=name,
                                                        branch=branch,
                                                        user=user,
-                                                       identity=identity)
+                                                       identity=identity,
+                                                       https_user=https_user,
+                                                       https_pass=https_pass)
 
             # only do something, if the specified rev differs from the
             # current_rev and remote_rev
-            if current_rev in [rev, remote_rev]:
+            if current_rev in [rev, remote_rev] or (remote_rev is not None and remote_rev.startswith(current_rev)):
                 new_rev = current_rev
             else:
 
@@ -239,6 +242,9 @@ def latest(name,
                 else:
                     fetch_opts = ''
 
+                if fetch_tags:
+                    fetch_opts += ' --tags'
+
                 # check remote if fetch_url not == name set it
                 remote = __salt__['git.remote_get'](target,
                                                     remote=remote_name,
@@ -247,7 +253,9 @@ def latest(name,
                     __salt__['git.remote_set'](target,
                                                name=remote_name,
                                                url=name,
-                                               user=user)
+                                               user=user,
+                                               https_user=https_user,
+                                               https_pass=https_pass)
                     ret['changes']['remote/{0}'.format(remote_name)] = (
                         "{0} => {1}".format(str(remote), name)
                     )
@@ -275,8 +283,9 @@ def latest(name,
                                               identity=identity)
 
                     if force_reset:
+                        opts = "--hard {0}/{1}".format(remote_name, rev)
                         __salt__['git.reset'](target,
-                                              opts="--hard",
+                                              opts=opts,
                                               user=user)
 
                     __salt__['git.checkout'](target,
@@ -328,8 +337,12 @@ def latest(name,
                                               identity=identity,
                                               opts='--recursive')
 
-                new_rev = __salt__['git.revision'](cwd=target, user=user)
+                try:
+                    new_rev = __salt__['git.revision'](cwd=target, user=user)
+                except CommandExecutionError:
+                    new_rev = None
         except Exception as exc:
+            log.error('Unexpected exception in git state', exc_info=True)
             return _fail(
                 ret,
                 str(exc))
@@ -372,12 +385,21 @@ def latest(name,
             # if remote_name is not origin add --origin <name> to opts
             if remote_name != 'origin':
                 opts += ' --origin {0}'.format(remote_name)
+
+            # if depth is given add --depth <depth> to opts
+            if depth is not None:
+                opts += ' --depth {0}'.format(depth)
+                if rev is not None:
+                    opts += ' --branch {0}'.format(rev)
+
             # do the clone
             __salt__['git.clone'](target,
                                   name,
                                   user=user,
                                   opts=opts,
-                                  identity=identity)
+                                  identity=identity,
+                                  https_user=https_user,
+                                  https_pass=https_pass)
 
             if rev and not bare:
                 __salt__['git.checkout'](target, rev, user=user)
@@ -388,10 +410,15 @@ def latest(name,
                                           identity=identity,
                                           opts='--recursive')
 
-            new_rev = None if bare else (
-                __salt__['git.revision'](cwd=target, user=user))
+            new_rev = None
+            if not bare:
+                try:
+                    new_rev = __salt__['git.revision'](cwd=target, user=user)
+                except CommandExecutionError:
+                    pass
 
         except Exception as exc:
+            log.error('Unexpected exception in git state', exc_info=True)
             return _fail(
                 ret,
                 str(exc))
@@ -405,7 +432,7 @@ def latest(name,
     return ret
 
 
-def present(name, bare=True, runas=None, user=None, force=False):
+def present(name, bare=True, user=None, force=False, shared=None):
     '''
     Make sure the repository is present in the given directory
 
@@ -415,11 +442,6 @@ def present(name, bare=True, runas=None, user=None, force=False):
     bare
         Create a bare repository (Default: True)
 
-    runas
-        Name of the user performing repository management operations
-
-        .. deprecated:: 0.17.0
-
     user
         Name of the user performing repository management operations
 
@@ -428,33 +450,14 @@ def present(name, bare=True, runas=None, user=None, force=False):
     force
         Force-create a new repository into an pre-existing non-git directory
         (deletes contents)
+
+    shared
+        Specify the permission for sharing, see git-init for details (Default: None)
+
+       .. versionadded:: XXXX
     '''
     name = os.path.expanduser(name)
     ret = {'name': name, 'result': True, 'comment': '', 'changes': {}}
-
-    salt.utils.warn_until(
-        'Lithium',
-        'Please remove \'runas\' support at this stage. \'user\' support was '
-        'added in 0.17.0',
-        _dont_call_warnings=True
-    )
-    if runas:
-        # Warn users about the deprecation
-        ret.setdefault('warnings', []).append(
-            'The \'runas\' argument is being deprecated in favor of \'user\', '
-            'please update your state files.'
-        )
-    if user is not None and runas is not None:
-        # user wins over runas but let warn about the deprecation.
-        ret.setdefault('warnings', []).append(
-            'Passed both the \'runas\' and \'user\' arguments. Please don\'t. '
-            '\'runas\' is being ignored in favor of \'user\'.'
-        )
-        runas = None
-    elif runas is not None:
-        # Support old runas usage
-        user = runas
-        runas = None
 
     # If the named directory is a git repo return True
     if os.path.isdir(name):
@@ -484,6 +487,7 @@ def present(name, bare=True, runas=None, user=None, force=False):
             shutil.rmtree(name)
 
     opts = '--bare' if bare else ''
+    opts += ' --shared={0}'.format(shared) if shared else ''
     __salt__['git.init'](cwd=name, user=user, opts=opts)
 
     message = 'Initialized repository {0}'.format(name)
@@ -599,14 +603,18 @@ def mod_run_check(cmd_kwargs, onlyif, unless):
     * unless succeeded (unless == 0)
     else return True
     '''
+    cmd_kwargs = copy.deepcopy(cmd_kwargs)
+    cmd_kwargs['python_shell'] = True
     if onlyif:
         if __salt__['cmd.retcode'](onlyif, **cmd_kwargs) != 0:
             return {'comment': 'onlyif execution failed',
+                    'skip_watch': True,
                     'result': True}
 
     if unless:
         if __salt__['cmd.retcode'](unless, **cmd_kwargs) == 0:
             return {'comment': 'unless execution succeeded',
+                    'skip_watch': True,
                     'result': True}
 
     # No reason to stop, return True

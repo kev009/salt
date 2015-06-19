@@ -4,6 +4,7 @@ Configure ``portage(5)``
 '''
 
 # Import python libs
+from __future__ import absolute_import
 import os
 import shutil
 
@@ -11,6 +12,8 @@ import shutil
 import salt.utils
 
 # Import third party libs
+import salt.ext.six as six
+# pylint: disable=import-error
 try:
     import portage
     HAS_PORTAGE = True
@@ -26,6 +29,7 @@ except ImportError:
             HAS_PORTAGE = True
         except ImportError:
             pass
+# pylint: enable=import-error
 
 
 BASE_PATH = '/etc/portage/package.{0}'
@@ -49,7 +53,7 @@ def _porttree():
 def _p_to_cp(p):
     '''
     Convert a package name or a DEPEND atom to category/package format.
-    Raises an exception if program name is ambigous.
+    Raises an exception if program name is ambiguous.
     '''
     ret = _porttree().dbapi.xmatch("match-all", p)
     if ret:
@@ -133,7 +137,7 @@ def _package_conf_file_to_dir(file_name):
                 return False
             else:
                 os.rename(path, path + '.tmpbak')
-                os.mkdir(path, 0755)
+                os.mkdir(path, 0o755)
                 with salt.utils.fopen(path + '.tmpbak') as fh_:
                     for line in fh_:
                         line = line.strip()
@@ -142,7 +146,7 @@ def _package_conf_file_to_dir(file_name):
                 os.remove(path + '.tmpbak')
                 return True
         else:
-            os.mkdir(path, 0755)
+            os.mkdir(path, 0o755)
             return True
 
 
@@ -206,12 +210,30 @@ def _package_conf_ordering(conf, clean=True, keep_backup=False):
                     shutil.rmtree(triplet[0])
 
 
-def _merge_flags(*args):
+def _check_accept_keywords(approved, flag):
+    '''check compatibility of accept_keywords'''
+    if flag in approved:
+        return False
+    elif (flag.startswith('~') and flag[1:] in approved) \
+            or ('~'+flag in approved):
+        return False
+    else:
+        return True
+
+
+def _merge_flags(new_flags, old_flags=None, conf='any'):
     '''
     Merges multiple lists of flags removing duplicates and resolving conflicts
     giving priority to lasts lists.
     '''
-    tmp = portage.flatten(args)
+    if not old_flags:
+        old_flags = []
+    args = [old_flags, new_flags]
+    if conf == 'accept_keywords':
+        tmp = new_flags + \
+            [i for i in old_flags if _check_accept_keywords(new_flags, i)]
+    else:
+        tmp = portage.flatten(args)
     flags = {}
     for flag in tmp:
         if flag[0] == '-':
@@ -219,11 +241,11 @@ def _merge_flags(*args):
         else:
             flags[flag] = True
     tmp = []
-    for k, v in flags.iteritems():
-        if v:
-            tmp.append(k)
+    for key, val in six.iteritems(flags):
+        if val:
+            tmp.append(key)
         else:
-            tmp.append('-' + k)
+            tmp.append('-' + key)
 
     # Next sort is just aesthetic, can be commented for a small performance
     # boost
@@ -255,7 +277,7 @@ def append_to_package_conf(conf, atom='', flags=None, string='', overwrite=False
             new_flags = list(flags)
         else:
             atom = string.strip().split()[0]
-            new_flags = portage.dep.strip_empty(string.strip().split(' '))[1:]
+            new_flags = [flag for flag in string.strip().split(' ') if flag][1:]
             if '/' not in atom:
                 atom = _p_to_cp(atom)
                 string = '{0} {1}'.format(atom, ' '.join(new_flags))
@@ -286,7 +308,7 @@ def append_to_package_conf(conf, atom='', flags=None, string='', overwrite=False
         if len(psplit) == 2:
             pdir = BASE_PATH.format(conf) + '/' + psplit[0]
             if not os.path.exists(pdir):
-                os.mkdir(pdir, 0755)
+                os.mkdir(pdir, 0o755)
 
         complete_file_path = BASE_PATH.format(conf) + '/' + package_file
 
@@ -316,7 +338,7 @@ def append_to_package_conf(conf, atom='', flags=None, string='', overwrite=False
                     new_contents += string.strip() + '\n'
                     added = True
                 else:
-                    old_flags = portage.dep.strip_empty(l_strip.split(' '))[1:]
+                    old_flags = [flag for flag in l_strip.split(' ') if flag][1:]
                     if conf == 'accept_keywords':
                         if not old_flags:
                             new_contents += l
@@ -325,7 +347,7 @@ def append_to_package_conf(conf, atom='', flags=None, string='', overwrite=False
                             continue
                         elif not new_flags:
                             continue
-                    merged_flags = _merge_flags(old_flags, new_flags)
+                    merged_flags = _merge_flags(new_flags, old_flags, conf)
                     if merged_flags:
                         new_contents += '{0} {1}\n'.format(
                             atom, ' '.join(merged_flags))
@@ -396,7 +418,7 @@ def get_flags_from_package_conf(conf, atom):
                 line_package = line.split()[0]
                 line_list = _porttree().dbapi.xmatch("match-all", line_package)
                 if match_list.issubset(line_list):
-                    f_tmp = portage.dep.strip_empty(line.strip().split()[1:])
+                    f_tmp = [flag for flag in line.strip().split(' ') if flag][1:]
                     if f_tmp:
                         flags.extend(f_tmp)
                     else:

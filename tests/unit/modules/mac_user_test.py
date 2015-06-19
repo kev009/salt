@@ -3,6 +3,11 @@
     :codeauthor: :email:`Nicole Thomas <nicole@saltstack.com>`
 '''
 
+# Import python libs
+from __future__ import absolute_import
+import grp
+import pwd
+
 # Import Salt Testing Libs
 from salttesting import TestCase, skipIf
 from salttesting.helpers import ensure_in_syspath
@@ -13,10 +18,6 @@ ensure_in_syspath('../../')
 # Import Salt Libs
 from salt.modules import mac_user
 from salt.exceptions import SaltInvocationError, CommandExecutionError
-
-# Import python Libs
-import pwd
-import grp
 
 
 @skipIf(NO_MOCK, NO_MOCK_REASON)
@@ -46,14 +47,6 @@ class MacUserTestCase(TestCase):
                      'groups': ['TEST_GROUP'], 'home': '/Users/foo',
                      'fullname': 'TEST USER', 'uid': 4376}
 
-    def test_osmajor(self):
-        '''
-        Tests version of OS X
-        '''
-        with patch.dict(mac_user.__grains__, {'kernel': 'Darwin',
-                                              'osrelease': '10.9.1'}):
-            self.assertEqual(mac_user._osmajor(), 10.9)
-
     @skipIf(True, 'Waiting on some clarifications from bug report #10594')
     def test_flush_dscl_cache(self):
         # TODO: Implement tests after clarifications come in
@@ -68,8 +61,9 @@ class MacUserTestCase(TestCase):
                                            'stderr': '',
                                            'stdout': ''})
         with patch.dict(mac_user.__salt__, {'cmd.run_all': mac_mock}):
-            with patch.dict(mac_user.__grains__, {'kernel': 'Darwin',
-                                                  'osrelease': '10.9.1'}):
+            with patch.dict(mac_user.__grains__,
+                            {'kernel': 'Darwin', 'osrelease': '10.9.1',
+                             'osrelease_info': (10, 9, 1)}):
                 self.assertEqual(mac_user._dscl('username'), {'pid': 4948,
                                                               'retcode': 0,
                                                               'stderr': '',

@@ -21,20 +21,22 @@ Use of this module requires the ``apikey``, ``secretkey``, ``host`` and
       provider: cloudstack
 
 '''
-# pylint: disable=E0102
+# pylint: disable=invalid-name,function-redefined
 
 # Import python libs
+from __future__ import absolute_import
 import copy
 import pprint
 import logging
 
 # Import salt cloud libs
 import salt.config as config
-from salt.cloud.libcloudfuncs import *   # pylint: disable=W0614,W0401
+from salt.cloud.libcloudfuncs import *  # pylint: disable=redefined-builtin,wildcard-import,unused-wildcard-import
 from salt.utils import namespaced_function
 from salt.exceptions import SaltCloudSystemExit
 
 # CloudStackNetwork will be needed during creation of a new node
+# pylint: disable=import-error
 try:
     from libcloud.compute.drivers.cloudstack import CloudStackNetwork
     HASLIBS = True
@@ -45,6 +47,7 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 # Redirect CloudStack functions to this module namespace
+get_node = namespaced_function(get_node, globals())
 get_size = namespaced_function(get_size, globals())
 get_image = namespaced_function(get_image, globals())
 avail_locations = namespaced_function(avail_locations, globals())
@@ -195,6 +198,24 @@ def get_networkid(vm_):
         return False
 
 
+def get_project(conn, vm_):
+    '''
+    Return the project to use.
+    '''
+    projects = conn.ex_list_projects()
+    projid = config.get_cloud_config_value('projectid', vm_, __opts__)
+
+    if not projid:
+        return False
+
+    for project in projects:
+        if str(projid) in (str(project.id), str(project.name)):
+            return project
+
+    log.warning("Couldn't find project {0} in projects".format(projid))
+    return False
+
+
 def create(vm_):
     '''
     Create a single VM from a data dict
@@ -231,6 +252,9 @@ def create(vm_):
                                                    None, None),
                              )
 
+    if get_project(conn, vm_) is not False:
+        kwargs['project'] = get_project(conn, vm_)
+
     salt.utils.cloud.fire_event(
         'event',
         'requesting instance',
@@ -240,6 +264,12 @@ def create(vm_):
                     'size': kwargs['size'].name}},
         transport=__opts__['transport']
     )
+
+    displayname = cloudstack_displayname(vm_)
+    if displayname:
+        kwargs['ex_displayname'] = displayname
+    else:
+        kwargs['ex_displayname'] = kwargs['name']
 
     volumes = {}
     ex_blockdevicemappings = block_device_mappings(vm_)
@@ -265,7 +295,7 @@ def create(vm_):
                     'Error creating volume {0} on CLOUDSTACK\n\n'
                     'The following exception was thrown by libcloud when trying to '
                     'requesting a volume: \n{1}'.format(
-                        ex_blockdevicemapping['VirtualName'], exc.message
+                        ex_blockdevicemapping['VirtualName'], exc
                     ),
                     # Show the traceback if the debug logging level is enabled
                     exc_info_on_loglevel=logging.DEBUG
@@ -287,7 +317,7 @@ def create(vm_):
         )
         return False
 
-    for device_name in volumes.keys():
+    for device_name in six.iterkeys(volumes):
         try:
             conn.attach_volume(data, volumes[device_name], device_name)
         except Exception as exc:
@@ -295,7 +325,7 @@ def create(vm_):
                 'Error attaching volume {0} on CLOUDSTACK\n\n'
                 'The following exception was thrown by libcloud when trying to '
                 'attach a volume: \n{1}'.format(
-                    ex_blockdevicemapping.get('VirtualName', 'UNKNOWN'), exc.message
+                    ex_blockdevicemapping.get('VirtualName', 'UNKNOWN'), exc
                 ),
                 # Show the traceback if the debug logging level is enabled
                 exc_info=log.isEnabledFor(logging.DEBUG)
@@ -536,4 +566,16 @@ def block_device_mappings(vm_):
     '''
     return config.get_cloud_config_value(
         'block_device_mappings', vm_, __opts__, search_global=True
+    )
+
+
+def cloudstack_displayname(vm_):
+    '''
+    Return display name of VM:
+
+    ::
+        "minion1"
+    '''
+    return config.get_cloud_config_value(
+        'cloudstack_displayname', vm_, __opts__, search_global=True
     )

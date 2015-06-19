@@ -82,6 +82,7 @@ This provides a console that has access to all the vars and functions, and even
 supports tab-completion.
 
 .. code-block:: python
+
     print(test)
     test123
 
@@ -154,8 +155,7 @@ external job cache. Use the ``redis`` returner as an example.
 Runners
 =======
 
-Runners are purely master-side execution sequences. These range from simple
-reporting to orchestration engines like the overstate.
+Runners are purely master-side execution sequences.
 
 Tops
 ====

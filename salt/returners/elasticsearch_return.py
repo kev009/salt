@@ -48,8 +48,13 @@ In order to have the returner apply to all minions:
 
     ext_job_cache: elasticsearch
 '''
+from __future__ import absolute_import
 
+# Import Python libs
 import datetime
+
+# Import Salt libs
+import salt.utils.jid
 
 __virtualname__ = 'elasticsearch'
 
@@ -67,7 +72,9 @@ except ImportError:
 
 
 def _create_index(client, index):
-    # create empty index
+    '''
+    Create empty index
+    '''
     client.indices.create(
         index=index,
         body={
@@ -111,10 +118,16 @@ def __virtual__():
 
 
 def _get_pickler():
+    '''
+    Return a picker instance
+    '''
     return Pickler(max_depth=5)
 
 
 def _get_instance():
+    '''
+    Return the elasticsearch instance
+    '''
     # Check whether we have a single elasticsearch host string, or a list of host strings.
     if isinstance(__salt__['config.get']('elasticsearch:host'), list):
         return elasticsearch.Elasticsearch(__salt__['config.get']('elasticsearch:host'))
@@ -123,12 +136,21 @@ def _get_instance():
 
 
 def returner(ret):
-    es = _get_instance()
-    _create_index(es, __salt__['config.get']('elasticsearch:index'))
-    r = ret
-    the_time = datetime.datetime.now().isoformat()
-    r['@timestamp'] = the_time
-    es.index(index=__salt__['config.get']('elasticsearch:index'),
+    '''
+    Process the return from Salt
+    '''
+    es_ = _get_instance()
+    _create_index(es_, __salt__['config.get']('elasticsearch:index'))
+    the_time = datetime.datetime.utcnow().isoformat()
+    ret['@timestamp'] = the_time
+    es_.index(index=__salt__['config.get']('elasticsearch:index'),
              doc_type='returner',
-             body=_get_pickler().flatten(r),
+             body=_get_pickler().flatten(ret),
              )
+
+
+def prep_jid(nocache=False, passed_jid=None):  # pylint: disable=unused-argument
+    '''
+    Do any work necessary to prepare a JID, including sending a custom id
+    '''
+    return passed_jid if passed_jid is not None else salt.utils.jid.gen_jid()

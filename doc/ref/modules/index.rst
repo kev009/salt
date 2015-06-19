@@ -84,7 +84,7 @@ minion.
 Grains Data
 -----------
 
-The values detected by the Salt Grains on the minion are available in a 
+The values detected by the Salt Grains on the minion are available in a
 :ref:`dict <python2:typesmapping>` named ``__grains__`` and can be accessed
 from within callable objects in the Python modules.
 
@@ -153,6 +153,15 @@ The ``__virtual__`` function is used to return either a
 :ref:`string <python2:typesseq>` or :py:data:`False`. If
 False is returned then the module is not loaded, if a string is returned then
 the module is loaded with the name of the string.
+
+.. note::
+
+   Optionally, modules may additionally return a list of reasons that a module could
+   not be loaded. For example, if a dependency for 'my_mod' was not met, a
+   __virtual__ function could do as follows:
+
+    return False, ['My Module must be installed before this module can be
+    used.']
 
 This means that the package manager modules can be presented as the ``pkg`` module
 regardless of what the actual module is named.
@@ -328,4 +337,19 @@ If a "fallback_function" is defined, it will replace the function instead of rem
         '''
         return True
 
+In addition to global dependancies the depends decorator also supports raw booleans.
 
+.. code-block:: python
+
+    from salt.utils.decorators import depends
+
+    HAS_DEP = False
+    try:
+        import dependency_that_sometimes_exists
+        HAS_DEP = True
+    except ImportError:
+        pass
+
+    @depends(HAS_DEP)
+    def foo():
+        return True

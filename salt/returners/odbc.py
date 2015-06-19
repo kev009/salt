@@ -63,7 +63,9 @@ the default location::
 
 Running the following commands against Microsoft SQL Server in the desired
 database as the appropriate user should create the database tables
-correctly.  Replace with equivalent SQL for other ODBC-compliant servers::
+correctly.  Replace with equivalent SQL for other ODBC-compliant servers
+
+.. code-block:: sql
 
     --
     -- Table structure for table 'jids'
@@ -98,20 +100,29 @@ correctly.  Replace with equivalent SQL for other ODBC-compliant servers::
     CREATE INDEX salt_returns_jid on dbo.salt_returns(jid);
     CREATE INDEX salt_returns_fun on dbo.salt_returns(fun);
 
-  To use this returner, append '--return odbc' to the salt command. ex:
+  To use this returner, append '--return odbc' to the salt command.
+
+  .. code-block:: bash
 
     salt '*' status.diskusage --return odbc
 
-  To use the alternative configuration, append '--return_config alternative' to the salt command. ex:
+  To use the alternative configuration, append '--return_config alternative' to the salt command.
+
+  .. versionadded:: 2015.5.0
+
+  .. code-block:: bash
 
     salt '*' test.ping --return odbc --return_config alternative
 '''
+from __future__ import absolute_import
 # Let's not allow PyLint complain about string substitution
 # pylint: disable=W1321,E1321
 
 # Import python libs
 import json
 
+# Import Salt libs
+import salt.utils.jid
 import salt.returners
 
 # FIXME We'll need to handle this differently for Windows.
@@ -165,6 +176,9 @@ def _get_conn(ret=None):
 
 
 def _close_conn(conn):
+    '''
+    Close the MySQL connection
+    '''
     conn.commit()
     conn.close()
 
@@ -255,7 +269,7 @@ def get_fun(fun):
 
     ret = {}
     if data:
-        for minion, jid, retval in data:
+        for minion, _, retval in data:
             ret[minion] = json.loads(retval)
     _close_conn(conn)
     return ret
@@ -293,3 +307,10 @@ def get_minions():
         ret.append(minion[0])
     _close_conn(conn)
     return ret
+
+
+def prep_jid(nocache=False, passed_jid=None):  # pylint: disable=unused-argument
+    '''
+    Do any work necessary to prepare a JID, including sending a custom id
+    '''
+    return passed_jid if passed_jid is not None else salt.utils.jid.gen_jid()

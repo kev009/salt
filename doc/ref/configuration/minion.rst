@@ -4,7 +4,7 @@
 Configuring the Salt Minion
 ===========================
 
-The Salt system is amazingly simple and easy to configure, the two components
+The Salt system is amazingly simple and easy to configure. The two components
 of the Salt system each have a respective configuration file. The
 :command:`salt-master` is configured via the master configuration file, and the
 :command:`salt-minion` is configured via the minion configuration file.
@@ -12,8 +12,8 @@ of the Salt system each have a respective configuration file. The
 .. seealso::
     :ref:`example minion configuration file <configuration-examples-minion>`
 
-The Salt Minion configuration is very simple, typically the only value that
-needs to be set is the master value so the minion can find its master.
+The Salt Minion configuration is very simple. Typically, the only value that
+needs to be set is the master value so the minion knows where to locate its master.
 
 By default, the salt-minion configuration will be in :file:`/etc/salt/minion`.
 A notable exception is FreeBSD, where the configuration will be in
@@ -122,6 +122,21 @@ Python's :func:`random.shuffle <python2:random.shuffle>` method.
 
     master_shuffle: True
 
+.. conf_minion:: retry_dns
+
+``retry_dns``
+---------------
+
+Default: ``30``
+
+Set the number of seconds to wait before attempting to resolve
+the master hostname if name resolution fails. Defaults to 30 seconds.
+Set to zero if the minion should shutdown and not retry.
+
+.. code-block:: yaml
+    
+    retry_dns: 30
+
 .. conf_minion:: master_port
 
 ``master_port``
@@ -149,7 +164,29 @@ The user to run the Salt processes
 
     user: root
 
+.. conf_minion:: sudo_runas
+
+``sudo_runas``
+--------------
+
+Default: None
+
+The user to run salt remote execution commands as via sudo. If this option is
+enabled then sudo will be used to change the active user executing the remote
+command. If enabled the user will need to be allowed access via the sudoers file
+for the user that the salt minion is configured to run as. The most common
+option would be to use the root user. If this option is set the ``user`` option
+should also be set to a non-root user. If migrating from a root minion to a non
+root minion the minion cache should be cleared and the minion pki directory will
+need to be changed to the ownership of the new user.
+
+.. code-block:: yaml
+
+    sudo_user: root
+
+
 .. conf_minion:: pidfile
+
 
 ``pidfile``
 -----------
@@ -234,6 +271,8 @@ Default: ``/var/cache/salt``
 
 The location for minion cache data.
 
+This directory may contain sensitive data and should be protected accordingly.
+
 .. code-block:: yaml
 
     cachedir: /var/cache/salt
@@ -274,10 +313,26 @@ executed. By default this feature is disabled, to enable set cache_jobs to
 
     cache_jobs: False
 
+.. conf_minion:: grains_cache
+
+``grains_cache``
+----------------
+
+Default: ``False``
+
+The minion can locally cache grain data instead of refreshing the data
+each time the grain is referenced. By default this feature is disabled,
+to enable set grains_cache to ``True``.
+
+.. code-block:: yaml
+
+    cache_jobs: False
+
+
 .. conf_minion:: sock_dir
 
 ``sock_dir``
---------------
+------------
 
 Default: ``/var/run/salt/minion``
 
@@ -317,7 +372,7 @@ master.
 .. conf_minion:: random_reauth_delay
 
 ``random_reauth_delay``
-------------------------
+-----------------------
 
 When the master key changes, the minion will try to re-auth itself to
 receive the new master key. In larger environments this can cause a syn-flood
@@ -345,10 +400,80 @@ seconds each iteration.
 
     acceptance_wait_time_max: None
 
+.. conf_minion:: recon_default
+
+``recon_default``
+-----------------
+
+Default: ``1000``
+
+The interval in milliseconds that the socket should wait before trying to
+reconnect to the master (1000ms = 1 second).
+
+.. code-block:: yaml
+
+    recon_default: 1000
+
+.. conf_minion:: recon_max
+
+``recon_max``
+-------------
+
+Default: ``10000``
+
+The maximum time a socket should wait. Each interval the time to wait is calculated
+by doubling the previous time. If recon_max is reached, it starts again at
+the recon_default.
+
+Short example:
+    - reconnect 1: the socket will wait 'recon_default' milliseconds
+    - reconnect 2: 'recon_default' * 2
+    - reconnect 3: ('recon_default' * 2) * 2
+    - reconnect 4: value from previous interval * 2
+    - reconnect 5: value from previous interval * 2
+    - reconnect x: if value >= recon_max, it starts again with recon_default
+
+.. code-block:: yaml
+
+    recon_max: 10000
+
+.. conf_minion:: recon_randomize
+
+``recon_randomize``
+-------------------
+
+Default: ``True``
+
+Generate a random wait time on minion start. The wait time will be a random value
+between recon_default and recon_default and recon_max. Having all minions reconnect
+with the same recon_default and recon_max value kind of defeats the purpose of being
+able to change these settings. If all minions have the same values and the setup is
+quite large (several thousand minions), they will still flood the master. The desired
+behavior is to have time-frame within all minions try to reconnect.
+
+.. code-block:: yaml
+
+    recon_randomize: True
+
+.. conf_minion:: cache_sreqs
+
+``cache_sreqs``
+---------------
+
+Default: ``True``
+
+The connection to the master ret_port is kept open. When set to False, the minion
+creates a new connection for every return to the master.
+environment, set this value to ``False``.
+
+.. code-block:: yaml
+
+    cache_sreqs: True
+
 .. conf_minion:: ipc_mode
 
 ``ipc_mode``
--------------
+------------
 
 Default: ``ipc``
 
@@ -641,7 +766,7 @@ directed to look on the minion by setting this parameter to ``local``.
 .. conf_minion:: use_master_when_local
 
 ``use_master_when_local``
----------------
+-------------------------
 
 Default: ``False``
 
@@ -688,7 +813,7 @@ the fileserver's environments. This parameter operates identically to the
 Default: ``md5``
 
 The hash_type is the hash to use when discovering the hash of a file on the
-local fileserver. The default is md5, but sha1, sha224, sha256, sha384 and
+local fileserver. The default is md5, but sha1, sha224, sha256, sha384, and
 sha512 are also supported.
 
 .. code-block:: yaml
@@ -868,7 +993,8 @@ The level of messages to send to the console. See also :conf_log:`log_level`.
 Default: ``warning``
 
 The level of messages to send to the log file. See also
-:conf_log:`log_level_logfile`.
+:conf_log:`log_level_logfile`. When it is not set explicitly
+it will inherit the level set by :conf_log:`log_level` option.
 
 .. code-block:: yaml
 

@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+
+from __future__ import absolute_import
 import logging
 import salt.utils
 
@@ -69,8 +71,8 @@ def _connect(**kwargs):
     nitro = NSNitro(connargs['host'], connargs['user'], connargs['pass'], True)
     try:
         nitro.login()
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSNitro.login() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSNitro.login() failed: {0}'.format(error))
         return None
     return nitro
 
@@ -78,8 +80,8 @@ def _connect(**kwargs):
 def _disconnect(nitro):
     try:
         nitro.logout()
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSNitro.logout() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSNitro.logout() failed: {0}'.format(error))
         return None
     return nitro
 
@@ -95,8 +97,8 @@ def _servicegroup_get(sg_name, **connection_args):
     sg.set_servicegroupname(sg_name)
     try:
         sg = NSServiceGroup.get(nitro, sg)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServiceGroup.get() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServiceGroup.get() failed: {0}'.format(error))
         sg = None
     _disconnect(nitro)
     return sg
@@ -113,8 +115,8 @@ def _servicegroup_get_servers(sg_name, **connection_args):
     sg.set_servicegroupname(sg_name)
     try:
         sg = NSServiceGroup.get_servers(nitro, sg)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServiceGroup.get_servers failed(): {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServiceGroup.get_servers failed(): {0}'.format(error))
         sg = None
     _disconnect(nitro)
     return sg
@@ -178,8 +180,8 @@ def servicegroup_add(sg_name, sg_type='HTTP', **connection_args):
     sg.set_servicetype(sg_type.upper())
     try:
         NSServiceGroup.add(nitro, sg)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServiceGroup.add() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServiceGroup.add() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -204,8 +206,8 @@ def servicegroup_delete(sg_name, **connection_args):
         return False
     try:
         NSServiceGroup.delete(nitro, sg)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServiceGroup.delete() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServiceGroup.delete() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -258,8 +260,8 @@ def servicegroup_server_enable(sg_name, s_name, s_port, **connection_args):
         return False
     try:
         NSServiceGroup.enable_server(nitro, server)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServiceGroup.enable_server() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServiceGroup.enable_server() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -284,8 +286,8 @@ def servicegroup_server_disable(sg_name, s_name, s_port, **connection_args):
         return False
     try:
         NSServiceGroup.disable_server(nitro, server)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServiceGroup.disable_server() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServiceGroup.disable_server() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -315,8 +317,8 @@ def servicegroup_server_add(sg_name, s_name, s_port, **connection_args):
     sgsb.set_port(s_port)
     try:
         NSServiceGroupServerBinding.add(nitro, sgsb)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServiceGroupServerBinding() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServiceGroupServerBinding() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -346,8 +348,8 @@ def servicegroup_server_delete(sg_name, s_name, s_port, **connection_args):
     sgsb.set_port(s_port)
     try:
         NSServiceGroupServerBinding.delete(nitro, sgsb)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServiceGroupServerBinding() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServiceGroupServerBinding() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -364,8 +366,8 @@ def _service_get(s_name, **connection_args):
     service.set_name(s_name)
     try:
         service = NSService.get(nitro, service)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSService.get() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSService.get() failed: {0}'.format(error))
         service = None
     _disconnect(nitro)
     return service
@@ -418,8 +420,8 @@ def service_enable(s_name, **connection_args):
         return False
     try:
         NSService.enable(nitro, service)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSService.enable() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSService.enable() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -447,8 +449,8 @@ def service_disable(s_name, s_delay=None, **connection_args):
         return False
     try:
         NSService.disable(nitro, service)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSService.enable() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSService.enable() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -462,8 +464,8 @@ def _server_get(s_name, **connection_args):
     server.set_name(s_name)
     try:
         server = NSServer.get(nitro, server)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServer.get() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServer.get() failed: {0}'.format(error))
         server = None
     _disconnect(nitro)
     return server
@@ -514,8 +516,8 @@ def server_add(s_name, s_ip, s_state=None, **connection_args):
         server.set_state(s_state)
     try:
         NSServer.add(nitro, server)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServer.add() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServer.add() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -540,8 +542,8 @@ def server_delete(s_name, **connection_args):
         return False
     try:
         NSServer.delete(nitro, server)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServer.delete() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServer.delete() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -576,8 +578,8 @@ def server_update(s_name, s_ip, **connection_args):
     ret = True
     try:
         NSServer.update(nitro, alt_server)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServer.update() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServer.update() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -618,8 +620,8 @@ def server_enable(s_name, **connection_args):
         return False
     try:
         NSServer.enable(nitro, server)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServer.enable() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServer.enable() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -646,8 +648,8 @@ def server_disable(s_name, **connection_args):
         return False
     try:
         NSServer.disable(nitro, server)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSServer.disable() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSServer.disable() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -661,8 +663,8 @@ def _vserver_get(v_name, **connection_args):
         return None
     try:
         vserver = NSLBVServer.get(nitro, vserver)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSLBVServer.get() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSLBVServer.get() failed: {0}'.format(error))
         vserver = None
     _disconnect(nitro)
     return vserver
@@ -714,8 +716,8 @@ def vserver_add(v_name, v_ip, v_port, v_type, **connection_args):
     vserver.set_servicetype(v_type.upper())
     try:
         NSLBVServer.add(nitro, vserver)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSLBVServer.add() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSLBVServer.add() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -740,8 +742,8 @@ def vserver_delete(v_name, **connection_args):
         return False
     try:
         NSLBVServer.delete(nitro, vserver)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSVServer.delete() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSVServer.delete() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -756,8 +758,8 @@ def _vserver_servicegroup_get(v_name, sg_name, **connection_args):
     vsg.set_name(v_name)
     try:
         vsgs = NSLBVServerServiceGroupBinding.get(nitro, vsg)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSLBVServerServiceGroupBinding.get() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSLBVServerServiceGroupBinding.get() failed: {0}'.format(error))
         return None
     for vsg in vsgs:
         if vsg.get_servicegroupname() == sg_name:
@@ -800,8 +802,8 @@ def vserver_servicegroup_add(v_name, sg_name, **connection_args):
     vsg.set_servicegroupname(sg_name)
     try:
         NSLBVServerServiceGroupBinding.add(nitro, vsg)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSLBVServerServiceGroupBinding.add() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSLBVServerServiceGroupBinding.add() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -828,8 +830,8 @@ def vserver_servicegroup_delete(v_name, sg_name, **connection_args):
     vsg.set_servicegroupname(sg_name)
     try:
         NSLBVServerServiceGroupBinding.delete(nitro, vsg)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSLBVServerServiceGroupBinding.delete() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSLBVServerServiceGroupBinding.delete() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -844,8 +846,8 @@ def _vserver_sslcert_get(v_name, sc_name, **connection_args):
     sslcert.set_vservername(v_name)
     try:
         sslcerts = NSSSLVServerSSLCertKeyBinding.get(nitro, sslcert)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSSSLVServerSSLCertKeyBinding.get() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSSSLVServerSSLCertKeyBinding.get() failed: {0}'.format(error))
         return None
     for sslcert in sslcerts:
         if sslcert.get_certkeyname() == sc_name:
@@ -887,8 +889,8 @@ def vserver_sslcert_add(v_name, sc_name, **connection_args):
     sslcert.set_certkeyname(sc_name)
     try:
         NSSSLVServerSSLCertKeyBinding.add(nitro, sslcert)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSSSLVServerSSLCertKeyBinding.add() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSSSLVServerSSLCertKeyBinding.add() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret
@@ -915,8 +917,8 @@ def vserver_sslcert_delete(v_name, sc_name, **connection_args):
     sslcert.set_certkeyname(sc_name)
     try:
         NSSSLVServerSSLCertKeyBinding.delete(nitro, sslcert)
-    except NSNitroError, e:
-        log.debug('netscaler module error - NSSSLVServerSSLCertKeyBinding.delete() failed: {0}'.format(e.message))
+    except NSNitroError as error:
+        log.debug('netscaler module error - NSSSLVServerSSLCertKeyBinding.delete() failed: {0}'.format(error))
         ret = False
     _disconnect(nitro)
     return ret

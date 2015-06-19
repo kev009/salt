@@ -4,6 +4,7 @@ Salt-specific interface for calling Salt Cloud directly
 '''
 
 # Import python libs
+from __future__ import absolute_import
 import os
 import logging
 import copy
@@ -16,6 +17,9 @@ except ImportError:
     HAS_SALTCLOUD = False
 
 import salt.utils
+
+# Import 3rd-party libs
+import salt.ext.six as six
 
 log = logging.getLogger(__name__)
 
@@ -116,7 +120,7 @@ def full_query(query_type='list_nodes_full'):
 
         salt '*' cloud.full_query
     '''
-    return query(query_type='list_nodes_full')
+    return query(query_type=query_type)
 
 
 def select_query(query_type='list_nodes_select'):
@@ -129,7 +133,53 @@ def select_query(query_type='list_nodes_select'):
 
         salt '*' cloud.select_query
     '''
-    return query(query_type='list_nodes_select')
+    return query(query_type=query_type)
+
+
+def has_instance(name, provider=None):
+    '''
+    Return true if the instance is found on a provider
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' cloud.has_instance myinstance
+    '''
+    data = get_instance(name, provider)
+    if data is None:
+        return False
+    return True
+
+
+def get_instance(name, provider=None):
+    '''
+    Return details on an instance.
+
+    Similar to the cloud action show_instance
+    but returns only the instance details.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' cloud.get_instance myinstance
+
+    SLS Example:
+
+    .. code-block:: bash
+
+        {{ salt['cloud.get_instance']('myinstance')['mac_address'] }}
+
+    '''
+    data = action(fun='show_instance', names=[name], provider=provider)
+    info = salt.utils.cloud.simple_types_filter(data)
+    try:
+        # get the first: [alias][driver][vm_name]
+        info = next(six.itervalues(next(six.itervalues(next(six.itervalues(info))))))
+    except AttributeError:
+        return None
+    return info
 
 
 def profile_(profile, names, vm_overrides=None, **kwargs):

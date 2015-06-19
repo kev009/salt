@@ -5,6 +5,7 @@ Manage glusterfs pool.
 
 # Import python libs
 from __future__ import generators
+from __future__ import absolute_import
 import logging
 import socket
 
@@ -88,7 +89,7 @@ def peered(name):
 
 
 def created(name, bricks, stripe=False, replica=False, device_vg=False,
-            transport='tcp', start=False):
+            transport='tcp', start=False, force=False):
     '''
     Check if volume already exists
 
@@ -152,7 +153,7 @@ def created(name, bricks, stripe=False, replica=False, device_vg=False,
 
     ret['comment'] = __salt__['glusterfs.create'](name, bricks, stripe,
                                                   replica, device_vg,
-                                                  transport, start)
+                                                  transport, start, force)
 
     old_volumes = volumes
     volumes = __salt__['glusterfs.list_volumes']()
@@ -173,8 +174,7 @@ def started(name):
     .. code-block:: yaml
 
         mycluster:
-          glusterfs:
-            - started
+          glusterfs.started: []
     '''
     ret = {'name': name,
            'changes': {},
@@ -217,18 +217,18 @@ def add_volume_bricks(name, bricks):
 
     .. code-block:: yaml
 
-    myvolume:
-      glusterfs.add_volume_bricks:
-        - bricks:
-            - host1:/srv/gluster/drive1
-            - host2:/srv/gluster/drive2
+        myvolume:
+          glusterfs.add_volume_bricks:
+            - bricks:
+                - host1:/srv/gluster/drive1
+                - host2:/srv/gluster/drive2
 
-    Replicated Volume:
-      glusterfs.add_volume_bricks:
-        - name: volume2
-        - bricks:
-          - host1:/srv/gluster/drive2
-          - host2:/srv/gluster/drive3
+        Replicated Volume:
+          glusterfs.add_volume_bricks:
+            - name: volume2
+            - bricks:
+              - host1:/srv/gluster/drive2
+              - host2:/srv/gluster/drive3
     '''
     ret = {'name': name,
        'changes': {},
@@ -254,7 +254,7 @@ def add_volume_bricks(name, bricks):
         old_bricks = current_bricks
         new_bricks = __salt__['glusterfs.status'](name)
         ret['result'] = True
-        ret['changes'] = {'new': new_bricks['bricks'].keys(), 'old': old_bricks['bricks'].keys()}
+        ret['changes'] = {'new': list(new_bricks['bricks'].keys()), 'old': list(old_bricks['bricks'].keys())}
         return ret
 
     if 'Bricks already in volume' in add_bricks:

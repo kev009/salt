@@ -6,6 +6,7 @@ The Salt Cloud Runner
 This runner wraps the functionality of salt cloud making salt cloud routines
 available to all internal apis via the runner system
 '''
+from __future__ import absolute_import
 
 # Import python libs
 import os
@@ -125,7 +126,7 @@ def destroy(instances):
 
 
 def action(
-        fun=None,
+        func=None,
         cloudmap=None,
         instances=None,
         provider=None,
@@ -135,7 +136,7 @@ def action(
     Execute a single action on the given map/provider/instance
     '''
     client = _get_client()
-    info = client.action(fun, cloudmap, instances, provider, instance, kwargs)
+    info = client.action(func, cloudmap, instances, provider, instance, kwargs)
     return info
 
 

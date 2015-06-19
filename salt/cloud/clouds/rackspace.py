@@ -32,9 +32,8 @@ Set up the cloud configuration at ``/etc/salt/cloud.providers`` or
       apikey: 901d3f579h23c8v73q9
 '''
 
-# The import section is mostly libcloud boilerplate
-
 # Import python libs
+from __future__ import absolute_import
 import copy
 import logging
 import socket
@@ -81,7 +80,6 @@ list_nodes = namespaced_function(list_nodes, globals())
 list_nodes_full = namespaced_function(list_nodes_full, globals())
 list_nodes_select = namespaced_function(list_nodes_select, globals())
 show_instance = namespaced_function(show_instance, globals())
-get_salt_interface = namespaced_function(get_salt_interface, globals())
 
 
 # Only load in this module is the RACKSPACE configurations are in place
@@ -184,12 +182,6 @@ def create(vm_):
     Create a single VM from a data dict
     '''
     deploy = config.get_cloud_config_value('deploy', vm_, __opts__)
-    if deploy is True and salt.utils.which('sshpass') is None:
-        raise SaltCloudSystemExit(
-            'Cannot deploy salt in a VM if the \'sshpass\' binary is not '
-            'present on the system.'
-        )
-
     salt.utils.cloud.fire_event(
         'event',
         'starting create',
@@ -235,14 +227,15 @@ def create(vm_):
         return False
 
     def __query_node_data(vm_, data):
+        running = False
         try:
             node = show_instance(vm_['name'], 'action')
+            running = (node['state'] == NodeState.RUNNING)
             log.debug(
-                'Loaded node data for {0}:\n{1}'.format(
+                'Loaded node data for {0}:\nname: {1}\nstate: {2}'.format(
                     vm_['name'],
-                    pprint.pformat(
-                        node['name']
-                    )
+                    pprint.pformat(node['name']),
+                    node['state']
                 )
             )
         except Exception as err:
@@ -256,15 +249,12 @@ def create(vm_):
             # Trigger a failure in the wait for IP function
             return False
 
-        running = node['name']['state'] == node_state(
-            NodeState.RUNNING
-        )
         if not running:
             # Still not running, trigger another iteration
             return
 
-        private = node['name']['private_ips']
-        public = node['name']['public_ips']
+        private = node['private_ips']
+        public = node['public_ips']
 
         if private and not public:
             log.warn(
@@ -319,7 +309,7 @@ def create(vm_):
         ip_address = preferred_ip(vm_, data.public_ips)
     log.debug('Using IP address {0}'.format(ip_address))
 
-    if get_salt_interface(vm_) == 'private_ips':
+    if salt.utils.cloud.get_salt_interface(vm_, __opts__) == 'private_ips':
         salt_ip_address = preferred_ip(vm_, data.private_ips)
         log.info('Salt interface set to: {0}'.format(salt_ip_address))
     else:
@@ -427,7 +417,6 @@ def create(vm_):
             transport=__opts__['transport']
         )
 
-        deployed = False
         if win_installer:
             deployed = salt.utils.cloud.deploy_windows(**deploy_kwargs)
         else:

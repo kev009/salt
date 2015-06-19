@@ -4,12 +4,14 @@ The jail module for FreeBSD
 '''
 
 # Import python libs
+from __future__ import absolute_import
 import os
-import subprocess
 import shlex
+import re
 
 # Import salt libs
 import salt.utils
+from salt._compat import subprocess
 
 # Define the module's virtual name
 __virtualname__ = 'jail'
@@ -74,8 +76,12 @@ def is_enabled():
 
         salt '*' jail.is_enabled <jail name>
     '''
-    cmd = 'service -e | grep jail'
-    return not __salt__['cmd.retcode'](cmd)
+    cmd = 'service -e'
+    services = __salt__['cmd.run'](cmd, python_shell=False)
+    for service in services.split('\\n'):
+        if re.search('jail', service):
+            return True
+    return False
 
 
 def get_enabled():
@@ -115,8 +121,8 @@ def show_config(jail):
     '''
     ret = {}
     if subprocess.call(["jls", "-nq", "-j", jail]) == 0:
-        jls = subprocess.check_output(["jls", "-nq", "-j", jail])
-        jailopts = shlex.split(jls)
+        jls = subprocess.check_output(["jls", "-nq", "-j", jail])  # pylint: disable=minimum-python-version
+        jailopts = shlex.split(salt.utils.to_str(jls))
         for jailopt in jailopts:
             if '=' not in jailopt:
                 ret[jailopt.strip().rstrip(";")] = '1'
@@ -144,7 +150,7 @@ def show_config(jail):
                             if line.split()[-1] == '{':
                                 if line.split()[0] != jail and line.split()[0] != '*':
                                     while line.split()[-1] != '}':
-                                        line = _fp.next()
+                                        line = next(_fp)
                                         line = line.partition('#')[0].strip()
                                 else:
                                     continue
@@ -213,8 +219,12 @@ def status(jail):
 
         salt '*' jail.status <jail name>
     '''
-    cmd = 'jls | grep {0}'.format(jail)
-    return not __salt__['cmd.retcode'](cmd)
+    cmd = 'jls'
+    found_jails = __salt__['cmd.run'](cmd, python_shell=False)
+    for found_jail in found_jails.split('\\n'):
+        if re.search(jail, found_jail):
+            return True
+    return False
 
 
 def sysctl():

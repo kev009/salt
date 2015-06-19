@@ -4,6 +4,7 @@ Connection library for Amazon S3
 
 :depends: requests
 '''
+from __future__ import absolute_import
 
 # Import Python libs
 import binascii
@@ -11,8 +12,14 @@ import datetime
 import hashlib
 import hmac
 import logging
-import urllib
-import requests
+
+# Import 3rd-party libs
+try:
+    import requests
+    HAS_REQUESTS = True  # pylint: disable=W0612
+except ImportError:
+    HAS_REQUESTS = False  # pylint: disable=W0612
+from salt.ext.six.moves.urllib.parse import urlencode  # pylint: disable=no-name-in-module,import-error
 
 # Import Salt libs
 import salt.utils
@@ -26,7 +33,7 @@ log = logging.getLogger(__name__)
 def query(key, keyid, method='GET', params=None, headers=None,
           requesturl=None, return_url=False, bucket=None, service_url=None,
           path=None, return_bin=False, action=None, local_file=None,
-          verify_ssl=True):
+          verify_ssl=True, full_headers=False):
     '''
     Perform a query against an S3-like API. This function requires that a
     secret key and the id for that key are passed in. For instance:
@@ -55,6 +62,9 @@ def query(key, keyid, method='GET', params=None, headers=None,
     these will not match Amazon's S3 wildcard certificates. Certificate
     verification is enabled by default.
     '''
+    if not HAS_REQUESTS:
+        log.error('There was an error: requests is required for s3 access')
+
     if not headers:
         headers = {}
 
@@ -108,7 +118,7 @@ def query(key, keyid, method='GET', params=None, headers=None,
         string_to_sign = '{0}\n'.format(method)
 
         new_headers = []
-        for header in sorted(headers.keys()):
+        for header in sorted(headers):
             if header.lower().startswith('x-amz'):
                 log.debug(header.lower())
                 new_headers.append('{0}:{1}'.format(header.lower(),
@@ -127,7 +137,7 @@ def query(key, keyid, method='GET', params=None, headers=None,
         sig = binascii.b2a_base64(hashed.digest())
         headers['Authorization'] = 'AWS {0}:{1}'.format(keyid, sig.strip())
 
-        querystring = urllib.urlencode(params)
+        querystring = urlencode(params)
         if action:
             if querystring:
                 querystring = '{0}&{1}'.format(action, querystring)
@@ -139,6 +149,7 @@ def query(key, keyid, method='GET', params=None, headers=None,
         if querystring:
             requesturl += '?{0}'.format(querystring)
 
+    data = None
     if method == 'PUT':
         if local_file:
             with salt.utils.fopen(local_file, 'r') as ifile:
@@ -150,6 +161,7 @@ def query(key, keyid, method='GET', params=None, headers=None,
 
     try:
         result = requests.request(method, requesturl, headers=headers,
+                                  data=data,
                                   verify=verify_ssl)
         response = result.content
     except requests.exceptions.HTTPError as exc:
@@ -162,7 +174,7 @@ def query(key, keyid, method='GET', params=None, headers=None,
     log.debug('S3 Response Status Code: {0}'.format(result.status_code))
 
     if method == 'PUT':
-        if result.getcode() == 200:
+        if result.status_code == 200:
             if local_file:
                 log.debug('Uploaded from {0} to {1}'.format(local_file, path))
             else:
@@ -172,14 +184,14 @@ def query(key, keyid, method='GET', params=None, headers=None,
                 log.debug('Failed to upload from {0} to {1}: {2}'.format(
                                                     local_file,
                                                     path,
-                                                    result.getcode(),
+                                                    result.status_code,
                                                     ))
             else:
                 log.debug('Failed to create bucket {0}'.format(bucket))
         return
 
     if method == 'DELETE':
-        if str(result.getcode()).startswith('2'):
+        if str(result.status_code).startswith('2'):
             if path:
                 log.debug('Deleted {0} from bucket {1}'.format(path, bucket))
             else:
@@ -189,7 +201,7 @@ def query(key, keyid, method='GET', params=None, headers=None,
                 log.debug('Failed to delete {0} from bucket {1}: {2}'.format(
                                                     path,
                                                     bucket,
-                                                    result.getcode(),
+                                                    result.status_code,
                                                     ))
             else:
                 log.debug('Failed to delete bucket {0}'.format(bucket))
@@ -216,8 +228,13 @@ def query(key, keyid, method='GET', params=None, headers=None,
         if return_url is True:
             return ret, requesturl
     else:
+        if result.status_code != requests.codes.ok:
+            return
         ret = {'headers': []}
-        for header in result.headers:
-            ret['headers'].append(header.strip())
+        if full_headers:
+            ret['headers'] = dict(result.headers)
+        else:
+            for header in result.headers:
+                ret['headers'].append(header.strip())
 
     return ret

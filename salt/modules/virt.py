@@ -8,6 +8,7 @@ Work with virtual machines managed by libvirt
 # of his in the virt func module have been used
 
 # Import python libs
+from __future__ import absolute_import
 import os
 import re
 import sys
@@ -20,18 +21,21 @@ import logging
 import yaml
 import jinja2
 import jinja2.exceptions
+from xml.dom import minidom
+import salt.ext.six as six
+from salt.ext.six.moves import StringIO as _StringIO  # pylint: disable=import-error
+from xml.dom import minidom
 try:
-    import libvirt
-    from xml.dom import minidom
-    HAS_ALL_IMPORTS = True
+    import libvirt  # pylint: disable=import-error
+    HAS_LIBVIRT = True
 except ImportError:
-    HAS_ALL_IMPORTS = False
+    HAS_LIBVIRT = False
 
 # Import salt libs
 import salt.utils
+import salt.utils.files
 import salt.utils.templates
 import salt.utils.validate.net
-from salt._compat import StringIO as _StringIO
 from salt.exceptions import CommandExecutionError, SaltInvocationError
 
 log = logging.getLogger(__name__)
@@ -55,7 +59,7 @@ VIRT_DEFAULT_HYPER = 'kvm'
 
 
 def __virtual__():
-    if not HAS_ALL_IMPORTS:
+    if not HAS_LIBVIRT:
         return False
     return 'virt'
 
@@ -98,8 +102,6 @@ def __get_conn():
          - http://libvirt.org/uri.html#URI_config
         '''
         connection = __salt__['config.get']('libvirt:connection', 'esx')
-        if connection.startswith('esx://'):
-            return connection
         return connection
 
     def __esxi_auth():
@@ -171,15 +173,17 @@ def _libvirt_creds():
     g_cmd = 'grep ^\\s*group /etc/libvirt/qemu.conf'
     u_cmd = 'grep ^\\s*user /etc/libvirt/qemu.conf'
     try:
-        group = subprocess.Popen(g_cmd,
-            shell=True,
-            stdout=subprocess.PIPE).communicate()[0].split('"')[1]
+        stdout = subprocess.Popen(g_cmd,
+                    shell=True,
+                    stdout=subprocess.PIPE).communicate()[0]
+        group = salt.utils.to_str(stdout).split('"')[1]
     except IndexError:
         group = 'root'
     try:
-        user = subprocess.Popen(u_cmd,
-            shell=True,
-            stdout=subprocess.PIPE).communicate()[0].split('"')[1]
+        stdout = subprocess.Popen(u_cmd,
+                    shell=True,
+                    stdout=subprocess.PIPE).communicate()[0]
+        user = salt.utils.to_str(stdout).split('"')[1]
     except IndexError:
         user = 'root'
     return {'user': user, 'group': group}
@@ -248,7 +252,7 @@ def _gen_xml(name,
 
     context['disks'] = {}
     for i, disk in enumerate(diskp):
-        for disk_name, args in disk.items():
+        for disk_name, args in six.iteritems(disk):
             context['disks'][disk_name] = {}
             fn_ = '{0}.{1}'.format(disk_name, args['format'])
             context['disks'][disk_name]['file_name'] = fn_
@@ -316,7 +320,7 @@ def _qemu_image_info(path):
     match_map = {'size': r'virtual size: \w+ \((\d+) byte[s]?\)',
                  'format': r'file format: (\w+)'}
 
-    for info, search in match_map.items():
+    for info, search in six.iteritems(match_map):
         try:
             ret[info] = re.search(search, out).group(1)
         except AttributeError:
@@ -396,7 +400,7 @@ def _disk_profile(profile, hypervisor, **kwargs):
         overlay = {}
 
     disklist = __salt__['config.get']('virt:disk', {}).get(profile, default)
-    for key, val in overlay.items():
+    for key, val in six.iteritems(overlay):
         for i, disks in enumerate(disklist):
             for disk in disks:
                 if key not in disks[disk]:
@@ -429,7 +433,7 @@ def _nic_profile(profile_name, hypervisor, **kwargs):
     interfaces = []
 
     def append_dict_profile_to_interface_list(profile_dict):
-        for interface_name, attributes in profile_dict.items():
+        for interface_name, attributes in six.iteritems(profile_dict):
             attributes['name'] = interface_name
             interfaces.append(attributes)
 
@@ -462,7 +466,7 @@ def _nic_profile(profile_name, hypervisor, **kwargs):
     elif isinstance(config_data, list):
         for interface in config_data:
             if isinstance(interface, dict):
-                if len(interface.keys()) == 1:
+                if len(interface) == 1:
                     append_dict_profile_to_interface_list(interface)
                 else:
                     interfaces.append(interface)
@@ -492,7 +496,7 @@ def _nic_profile(profile_name, hypervisor, **kwargs):
         attributes['source'] = attributes.get('source', None)
 
     def _apply_default_overlay(attributes):
-        for key, value in overlays[hypervisor].items():
+        for key, value in six.iteritems(overlays[hypervisor]):
             if key not in attributes or not attributes[key]:
                 attributes[key] = value
 
@@ -552,7 +556,7 @@ def init(name,
 
         # When using a disk profile extract the sole dict key of the first
         # array element as the filename for disk
-        disk_name = diskp[0].keys()[0]
+        disk_name = next(six.iterkeys(diskp[0]))
         disk_type = diskp[0][disk_name]['format']
         disk_file_name = '{0}.{1}'.format(disk_name, disk_type)
 
@@ -573,15 +577,16 @@ def init(name,
             if not os.path.isdir(img_dir):
                 os.makedirs(img_dir)
             try:
-                salt.utils.copyfile(sfn, img_dest)
+                salt.utils.files.copyfile(sfn, img_dest)
                 mask = os.umask(0)
                 os.umask(mask)
                 # Apply umask and remove exec bit
                 mode = (0o0777 ^ mask) & 0o0666
                 os.chmod(img_dest, mode)
 
-            except (IOError, OSError):
-                return False
+            except (IOError, OSError) as e:
+                raise CommandExecutionError('problem copying image. {0} - {1}'.format(image, e))
+
             seedable = True
         else:
             log.error('unsupported hypervisor when handling disk image')
@@ -599,7 +604,7 @@ def init(name,
         else:
             # assume libvirt manages disks for us
             for disk in diskp:
-                for disk_name, args in disk.items():
+                for disk_name, args in six.iteritems(disk):
                     xml = _gen_vol_xml(name,
                                        disk_name,
                                        args['size'],
@@ -798,16 +803,16 @@ def get_nics(vm_):
                 # driver, source, and match can all have optional attributes
                 if re.match('(driver|source|address)', v_node.tagName):
                     temp = {}
-                    for key in v_node.attributes.keys():
-                        temp[key] = v_node.getAttribute(key)
+                    for key, value in v_node.attributes.items():
+                        temp[key] = value
                     nic[str(v_node.tagName)] = temp
                 # virtualport needs to be handled separately, to pick up the
                 # type attribute of the virtualport itself
                 if v_node.tagName == 'virtualport':
                     temp = {}
                     temp['type'] = v_node.getAttribute('type')
-                    for key in v_node.attributes.keys():
-                        temp[key] = v_node.getAttribute(key)
+                    for key, value in v_node.attributes.items():
+                        temp[key] = value
                     nic['virtualport'] = temp
             if 'mac' not in nic:
                 continue
@@ -856,8 +861,8 @@ def get_graphics(vm_):
     for node in doc.getElementsByTagName('domain'):
         g_nodes = node.getElementsByTagName('graphics')
         for g_node in g_nodes:
-            for key in g_node.attributes.keys():
-                out[key] = g_node.getAttribute(key)
+            for key, value in g_node.attributes.items():
+                out[key] = value
     return out
 
 
@@ -905,10 +910,11 @@ def get_disks(vm_):
                 break
 
             output = []
-            qemu_output = subprocess.Popen(['qemu-img', 'info',
-                disks[dev]['file']],
-                shell=False,
-                stdout=subprocess.PIPE).communicate()[0]
+            stdout = subprocess.Popen(
+                        ['qemu-img', 'info', disks[dev]['file']],
+                        shell=False,
+                        stdout=subprocess.PIPE).communicate()[0]
+            qemu_output = salt.utils.to_str(stdout)
             snapshots = False
             columns = None
             lines = qemu_output.strip().split('\n')
@@ -1019,8 +1025,8 @@ def setvcpus(vm_, vcpus, config=False):
 
 def freemem():
     '''
-    Return an int representing the amount of memory that has not been given
-    to virtual machines on this node
+    Return an int representing the amount of memory (in MB) that has not
+    been given to virtual machines on this node
 
     CLI Example:
 
@@ -1356,9 +1362,10 @@ def migrate_non_shared(vm_, target, ssh=False):
     cmd = _get_migrate_command() + ' --copy-storage-all ' + vm_\
         + _get_target(target, ssh)
 
-    return subprocess.Popen(cmd,
-            shell=True,
-            stdout=subprocess.PIPE).communicate()[0]
+    stdout = subprocess.Popen(cmd,
+                shell=True,
+                stdout=subprocess.PIPE).communicate()[0]
+    return salt.utils.to_str(stdout)
 
 
 def migrate_non_shared_inc(vm_, target, ssh=False):
@@ -1374,9 +1381,10 @@ def migrate_non_shared_inc(vm_, target, ssh=False):
     cmd = _get_migrate_command() + ' --copy-storage-inc ' + vm_\
         + _get_target(target, ssh)
 
-    return subprocess.Popen(cmd,
-            shell=True,
-            stdout=subprocess.PIPE).communicate()[0]
+    stdout = subprocess.Popen(cmd,
+                shell=True,
+                stdout=subprocess.PIPE).communicate()[0]
+    return salt.utils.to_str(stdout)
 
 
 def migrate(vm_, target, ssh=False):
@@ -1392,9 +1400,10 @@ def migrate(vm_, target, ssh=False):
     cmd = _get_migrate_command() + ' ' + vm_\
         + _get_target(target, ssh)
 
-    return subprocess.Popen(cmd,
-            shell=True,
-            stdout=subprocess.PIPE).communicate()[0]
+    stdout = subprocess.Popen(cmd,
+                shell=True,
+                stdout=subprocess.PIPE).communicate()[0]
+    return salt.utils.to_str(stdout)
 
 
 def seed_non_shared_migrate(disks, force=False):
@@ -1409,7 +1418,7 @@ def seed_non_shared_migrate(disks, force=False):
 
         salt '*' virt.seed_non_shared_migrate <disks>
     '''
-    for _, data in disks.items():
+    for _, data in six.iteritems(disks):
         fn_ = data['file']
         form = data['file format']
         size = data['virtual size'].split()[1][1:]
@@ -1541,8 +1550,6 @@ def is_kvm_hyper():
 
         salt '*' virt.is_kvm_hyper
     '''
-    if __grains__['virtual'] != 'physical':
-        return False
     try:
         if 'kvm_' not in salt.utils.fopen('/proc/modules').read():
             return False
@@ -1587,12 +1594,9 @@ def is_hyper():
 
         salt '*' virt.is_hyper
     '''
-    try:
-        import libvirt
-    except ImportError:
-        # not a usable hypervisor without libvirt module
-        return False
-    return is_xen_hyper() or is_kvm_hyper()
+    if HAS_LIBVIRT:
+        return is_xen_hyper() or is_kvm_hyper()
+    return False
 
 
 def vm_cputime(vm_=None):
@@ -1686,7 +1690,7 @@ def vm_netstats(vm_=None):
                 'tx_errs': 0,
                 'tx_drop': 0
                }
-        for attrs in nics.values():
+        for attrs in six.itervalues(nics):
             if 'target' in attrs:
                 dev = attrs['target']
                 stats = dom.interfaceStats(dev)
